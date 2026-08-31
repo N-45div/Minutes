@@ -16,7 +16,7 @@ arithmetic the parent performs over figures already cited above it ("we count
 — they report the state of the parent's own records — so they carry no marker,
 but they are recorded on the draft so that nothing enters a body unrecorded.
 
-Three rules ride on top of the footnotes:
+Four rules ride on top of the footnotes:
 
 * School-confirmed and documented-silence facts are stated plainly.
 * Parent-observed facts are always attributed ("We recorded at home that ...")
@@ -24,6 +24,20 @@ Three rules ride on top of the footnotes:
 * Owed minutes with no evidence either way are described as *undocumented*.
   Undocumented is a statement about the parent's records, never an assertion
   that the district did not deliver.
+* Minutes falling on a date the records note the child was absent are stated
+  in the service's own paragraph and excluded from the difference the letter
+  claims. That sentence is worth more to the family than the minutes it gives
+  up: a district that can answer one line of a demand with "she was not in
+  school that day" has been handed a reason to doubt every other line. The
+  wording stays neutral — an absence is a fact about attendance, never an
+  admission about the school and never a complaint about the child — and it
+  says only what the record says. It names the dates the record names; it does
+  not say a session was scheduled on one, because the ledger holds no schedule
+  and a claim nothing in the evidence supports is exactly what this module
+  exists to make impossible. Nor can an absence record become the evidence
+  behind an escalation: those minutes are already out of the difference, so the
+  record that gave them up may not double as the reason to ask for the rest
+  (:func:`_is_evidenced_gap`).
 
 A letter also only ever quotes an IEP provision whose own term overlaps the
 period it is talking about (:func:`_obligation_for`). An expired or not-yet-
@@ -72,6 +86,7 @@ from .models import (
     ServiceObligation,
     ServiceShortfall,
 )
+from .reconcile import ABSENCE_NOTE, NON_DELIVERY_NOTE, evidence_date
 
 __all__ = [
     "ACCUSATORY_PHRASES",
@@ -512,6 +527,125 @@ def _by_provenance(evidence: Sequence[EvidenceRef], provenance: Provenance) -> l
     return [e for e in evidence if e.provenance is provenance]
 
 
+def _absence_refs(line: ServiceShortfall, provenance: Provenance) -> list[EvidenceRef]:
+    """The records on this line that note the student as absent, one grade at a time.
+
+    ``EvidenceRef`` carries no attribution field, so the refs are selected on
+    the note :mod:`minutes.reconcile` writes into the detail and publishes as
+    ``ABSENCE_NOTE``. Importing that constant rather than re-typing the
+    sentence is what keeps the two modules from drifting into disagreement
+    about which footnote supports the exclusion.
+    """
+    return [ref for ref in _by_provenance(line.evidence, provenance) if ABSENCE_NOTE in ref.detail]
+
+
+def _delivery_refs(line: ServiceShortfall, provenance: Provenance) -> list[EvidenceRef]:
+    """The records on this line that support a claim of minutes DELIVERED.
+
+    A footnote list has to support the sentence it hangs from. A record saying
+    a session did not happen — an absence record above all, whose minutes this
+    letter has just given up — cannot be offered as a source for the minutes
+    the district delivered. Selected on the notes :mod:`minutes.reconcile`
+    publishes for exactly this, so the two modules agree by import rather than
+    by memory.
+    """
+    return [
+        ref
+        for ref in _by_provenance(line.evidence, provenance)
+        if NON_DELIVERY_NOTE not in ref.detail and ABSENCE_NOTE not in ref.detail
+    ]
+
+
+def _dates_phrase(dates: list[date]) -> str:
+    """The dates named, as "on 2026-10-14" — never a bare plural.
+
+    "absent on dates in this period", said of one record, reads as several
+    absences. The dates are in the footnotes already, so naming them is both
+    shorter and unarguable. Refs this module did not write carry no date
+    (:func:`~minutes.reconcile.evidence_date` returns None), and the fallback
+    claims no count at all.
+    """
+    if not dates:
+        return "during this period"
+    rendered = [day.isoformat() for day in dates]
+    if len(rendered) == 1:
+        return f"on {rendered[0]}"
+    return "on " + ", ".join(rendered[:-1]) + f" and {rendered[-1]}"
+
+
+def _absence_dates(refs: Sequence[EvidenceRef]) -> list[date]:
+    return sorted({day for ref in refs if (day := evidence_date(ref)) is not None})
+
+
+def _excused_sentences(draft: _Draft, ledger: IEPLedger, line: ServiceShortfall) -> list[str]:
+    """State the minutes excluded for absence, and what they rest on.
+
+    The parent gives these minutes up, so the letter says so out loud instead
+    of quietly reporting a smaller difference. A district that finds one line
+    of a demand answerable with "she was not in school that day" has a reason
+    to doubt the rest; a district that reads the family struck those minutes
+    itself has none.
+
+    Split by evidence grade like every other claim here: the district's own
+    record is stated plainly, the family's log is attributed to the family.
+    Neither sentence characterizes anybody, and neither says more than the
+    record does — the dates are named, and nothing is asserted about what was
+    scheduled on them, because the ledger holds no schedule to assert it from.
+    An absence is a fact about attendance: not an admission by the school, not
+    a complaint about the child.
+
+    If neither grade produced a citable record, the exclusion sentence goes
+    with them. It is the one claim in this module that is about the CHILD, so
+    it may not stand as unfootnoted arithmetic once the records under it are
+    gone — cite or stay silent applies hardest to the sentence a family would
+    least like to be asked to prove.
+    """
+    if not line.excused_minutes:
+        return []
+
+    alias = ledger.student_alias
+    school = _absence_refs(line, Provenance.SCHOOL_CONFIRMED)
+    parent = _absence_refs(line, Provenance.PARENT_OBSERVED)
+    stated = [
+        draft.cite(
+            f"District records note {alias} as absent {_dates_phrase(_absence_dates(school))}.",
+            school,
+        ),
+        draft.cite(
+            f"We recorded at home that {alias} was absent "
+            f"{_dates_phrase(_absence_dates(parent))}.",
+            parent,
+        ),
+    ]
+    kept = [sentence for sentence in stated if sentence]
+    if not kept:
+        return []
+
+    dates = _absence_dates(school + parent)
+    fell_on = "a date noted as an absence" if len(dates) == 1 else "dates noted as an absence"
+    return kept + [
+        draft.derived(
+            f"{line.excused_minutes} minutes are excluded from the difference below as minutes "
+            f"owed on {fell_on}, rather than asked of the district."
+        )
+    ]
+
+
+def _totals_sentence(draft: _Draft, line: ServiceShortfall) -> str:
+    """The line's whole arithmetic in one sentence, with every term the reader
+    needs to reproduce it: owed, delivered, anything excluded for an absence,
+    and the difference those leave."""
+    excluded = (
+        f", {line.excused_minutes} minutes excluded as falling on a noted absence"
+        if line.excused_minutes
+        else ""
+    )
+    return draft.derived(
+        f"For this period: {line.owed_minutes} minutes owed, {line.delivered_minutes} minutes "
+        f"documented as delivered{excluded}, a difference of {line.shortfall_minutes} minutes."
+    )
+
+
 def _silence_ref(request: RecordsRequest) -> EvidenceRef:
     """An overdue, unanswered request is itself dated evidence — that is the
     whole point of sending it early."""
@@ -562,6 +696,32 @@ def _request_history_sentence(request: RecordsRequest) -> tuple[str, list[Eviden
     return None
 
 
+def _period_totals(matched: Sequence[ServiceShortfall]) -> tuple[int, int, int, int]:
+    """Owed, delivered, excused and the difference, over the quotable lines only."""
+    return (
+        sum(line.owed_minutes for line in matched),
+        sum(line.delivered_minutes for line in matched),
+        sum(line.excused_minutes for line in matched),
+        sum(line.shortfall_minutes for line in matched),
+    )
+
+
+def _terms_clause(ledger: IEPLedger, owed: int, delivered: int, excused: int) -> str:
+    """Every term the summary figure was computed from, in one clause.
+
+    A summary that names two terms and subtracts three is the fastest way to
+    make a district doubt a letter: 8,520 minus 1,365 is not 7,050 unless the
+    105 excused minutes are named too. The per-service paragraphs above already
+    name them (:func:`_totals_sentence`), so the summary does as well, and the
+    headline figure stays reproducible from the words around it.
+    """
+    return (
+        f"the IEP provides {owed} minutes for this period, {delivered} minutes are documented "
+        f"as delivered, and {excused} minutes fall on dates a record notes "
+        f"{ledger.student_alias} was absent and are excluded"
+    )
+
+
 def _matched_shortfalls(ledger: IEPLedger, result: ReconciliationResult) -> list[ServiceShortfall]:
     """Reconciliation lines the IEP on file can actually be quoted for.
 
@@ -576,17 +736,39 @@ def _matched_shortfalls(ledger: IEPLedger, result: ReconciliationResult) -> list
     ]
 
 
-# A gap the district's own records speak to — either because the district
-# confirmed something about the period, or because a documented silence stands
-# where a record should be. A gap made only of minutes with no evidence either
-# way is a gap in the *parent's* records, and what that calls for is a records
-# request, not a request for compensatory services.
-_ESCALATION_GRADES = (Provenance.SCHOOL_CONFIRMED, Provenance.DOCUMENTED_SILENCE)
-
-
 def _is_evidenced_gap(line: ServiceShortfall) -> bool:
-    return line.shortfall_minutes > 0 and any(
-        ref.provenance in _ESCALATION_GRADES for ref in line.evidence
+    """Do the district's own records speak to THE GAP — not merely to the period?
+
+    A gap made only of minutes with no evidence either way is a gap in the
+    *parent's* records, and what that calls for is a records request, not a
+    request for compensatory services.
+
+    The test is therefore on the short minutes themselves, not on whether some
+    record of some kind sits on the line. A line can hold a shelf of
+    school-confirmed records that document only the sessions that were
+    delivered, and leave every short minute undocumented; asking a district to
+    convene a team over minutes nobody has recorded either way overstates what
+    the family holds. ``shortfall_minutes - undocumented_minutes`` is exactly
+    the part of the gap a district record already speaks to, and it is what
+    escalation rests on.
+
+    An absence record cannot be that evidence even in principle, and this
+    subtraction is why: :mod:`minutes.reconcile` has already taken those
+    minutes out of the shortfall, so a record used to give minutes up can
+    never double as the reason to ask for the rest.
+
+    A documented silence is the one thing that escalates without documenting
+    the gap, because it is evidence *about* the gap: an overdue, unanswered
+    records request standing where a service log should be. By contract with
+    ``reconcile.py`` a silence never shrinks the undocumented bucket, so it has
+    to be recognized here or it would never escalate at all.
+    """
+    if line.shortfall_minutes <= 0:
+        return False
+    if line.shortfall_minutes > line.undocumented_minutes:
+        return True
+    return any(
+        ref.provenance is Provenance.DOCUMENTED_SILENCE for ref in line.evidence
     )
 
 
@@ -616,7 +798,7 @@ def _reconciliation_blocks(draft: _Draft, ledger: IEPLedger, result: Reconciliat
         if line.school_confirmed_minutes:
             confirmed = draft.cite(
                 f"District records account for {line.school_confirmed_minutes} of those minutes as delivered.",
-                _by_provenance(line.evidence, Provenance.SCHOOL_CONFIRMED),
+                _delivery_refs(line, Provenance.SCHOOL_CONFIRMED),
             )
 
         observed = None
@@ -624,8 +806,12 @@ def _reconciliation_blocks(draft: _Draft, ledger: IEPLedger, result: Reconciliat
             observed = draft.cite(
                 f"We recorded at home a further {line.parent_observed_minutes} minutes as delivered; "
                 "that is our observation and not a district record.",
-                _by_provenance(line.evidence, Provenance.PARENT_OBSERVED),
+                _delivery_refs(line, Provenance.PARENT_OBSERVED),
             )
+
+        # Stated before the undocumented count, because the count is a share of
+        # a difference these minutes are already out of.
+        excused = _excused_sentences(draft, ledger, line)
 
         silence = None
         undocumented_note = None
@@ -639,13 +825,12 @@ def _reconciliation_blocks(draft: _Draft, ledger: IEPLedger, result: Reconciliat
                 "our records rather than what took place at school."
             )
 
-        totals = draft.derived(
-            f"For this period: {line.owed_minutes} minutes owed, {line.delivered_minutes} minutes "
-            f"documented as delivered, a difference of {line.shortfall_minutes} minutes."
-        )
+        totals = _totals_sentence(draft, line)
 
         draft.text(f"{line.service} — {line.period_start.isoformat()} to {line.period_end.isoformat()}")
-        draft.paragraph(provision, arithmetic, confirmed, observed, silence, undocumented_note, totals)
+        draft.paragraph(
+            provision, arithmetic, confirmed, observed, *excused, silence, undocumented_note, totals
+        )
 
     if omitted:
         many = len(omitted) > 1
@@ -846,7 +1031,7 @@ def compile_shortfall_notice(
     )
 
     matched = _matched_shortfalls(ledger, result)
-    total = sum(line.shortfall_minutes for line in matched)
+    owed, delivered, excused, total = _period_totals(matched)
 
     _reconciliation_blocks(draft, ledger, result)
 
@@ -855,6 +1040,17 @@ def compile_shortfall_notice(
             "No service in this period could be matched to a provision in the IEP on file, so this letter "
             "makes no findings. Please send the current IEP and the service records for the period above."
         )
+    elif total == 0 and excused:
+        # "The records reconcile" would be false here and would put a
+        # disclaimer of concern in the district's file for a period in which
+        # part of the promise was not delivered at all. The three figures are
+        # stated instead, and nothing is inferred from them.
+        draft.text(
+            f"Across the services above, {_terms_clause(ledger, owed, delivered, excused)}, which "
+            "leaves no difference for this period to state. I am not asking the district to account "
+            "for the excluded minutes. I am asking the district to compare these figures against its "
+            "own service logs and to tell me in writing where they differ."
+        )
     elif total == 0:
         draft.text(
             "For this period the records we hold reconcile with the minutes the IEP provides. I am not "
@@ -862,9 +1058,17 @@ def compile_shortfall_notice(
             "figures against its own service logs so that the two records stay aligned."
         )
     else:
+        opening = (
+            f"Across the services above, {_terms_clause(ledger, owed, delivered, excused)}, leaving a "
+            f"difference of {total} minutes for this period."
+            if excused
+            else (
+                f"Across the services above the difference between the minutes the IEP provides and the "
+                f"minutes documented as delivered is {total} minutes for this period."
+            )
+        )
         draft.text(
-            f"Across the services above the difference between the minutes the IEP provides and the minutes "
-            f"documented as delivered is {total} minutes for this period. That is arithmetic from the IEP's "
+            f"{opening} That is arithmetic from the IEP's "
             "own numbers and from the records available to me; it is not a conclusion about the district's "
             "conduct, and where a figure is marked undocumented I am not stating that a session did or did "
             "not happen."
@@ -946,7 +1150,7 @@ def compile_compensatory_request(
     # something: with no documented gap there is nothing to request, and the
     # subject line has to say so before the school opens it.
     matched = _matched_shortfalls(ledger, result)
-    total = sum(line.shortfall_minutes for line in matched)
+    owed, delivered, excused, total = _period_totals(matched)
     evidenced = any(_is_evidenced_gap(line) for line in matched)
     requesting = total > 0 and evidenced
     subject = (
@@ -1000,6 +1204,16 @@ def compile_compensatory_request(
             "makes no request and states no figures. Please send the current IEP and the service records "
             "for the period above."
         )
+    elif total == 0 and excused:
+        # A period excused to zero is not a period that reconciles. Saying it
+        # does would put a written concession in the district's file for
+        # minutes that were never delivered.
+        draft.text(
+            f"Across the services above, {_terms_clause(ledger, owed, delivered, excused)}, which "
+            "leaves no difference for this period, so I am not requesting compensatory services. I am "
+            "asking the district to confirm these figures against its own service logs, and to tell me "
+            "in writing if its records differ so that I can correct mine."
+        )
     elif total == 0:
         draft.text(
             "For this period the records I hold reconcile with the minutes the IEP provides, so I am not "
@@ -1007,18 +1221,35 @@ def compile_compensatory_request(
             "own service logs, and to tell me in writing if its records differ so that I can correct mine."
         )
     elif not requesting:
+        opening = (
+            f"Across the services above, {_terms_clause(ledger, owed, delivered, excused)}, leaving an "
+            f"arithmetic difference of {total} minutes. Every one of those minutes is a minute for "
+            "which I hold no record either way."
+            if excused
+            else (
+                f"The arithmetic difference for this period is {total} minutes, and every one of those "
+                "minutes is a minute for which I hold no record either way."
+            )
+        )
         draft.text(
-            f"The arithmetic difference for this period is {total} minutes, and every one of those minutes "
-            "is a minute for which I hold no record either way. That is a gap in my records, not a record of "
+            f"{opening} That is a gap in my records, not a record of "
             "anything that did or did not happen at school, so I am not requesting compensatory services on "
             "the strength of it. I am asking the district for its service logs, session notes, and "
             "attendance records for these services for the period above (34 CFR 300.613(a)), so that the "
             "difference can be resolved against the district's own documents."
         )
     else:
+        opening = (
+            f"Across the services above, {_terms_clause(ledger, owed, delivered, excused)}, leaving an "
+            f"arithmetic difference of {total} minutes."
+            if excused
+            else (
+                f"The arithmetic difference for this period is {total} minutes between the minutes the IEP "
+                "provides and the minutes documented as delivered."
+            )
+        )
         draft.text(
-            f"The arithmetic difference for this period is {total} minutes between the minutes the IEP "
-            "provides and the minutes documented as delivered. I am not stating what that difference means "
+            f"{opening} I am not stating what that difference means "
             "or what amount of service would answer it. I am asking the IEP team to review it, to determine "
             "whether compensatory services are appropriate, and to record that determination in writing. "
             "34 CFR 300.151(b)(1)-(2) recognizes compensatory services as a remedy an SEA may order where "

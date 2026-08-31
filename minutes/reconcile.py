@@ -7,10 +7,10 @@ into numbers. Nothing here calls a model. A letter that footnotes a number is
 only as trustworthy as the number, so every figure below is reproducible from
 the ledger and the event list alone.
 
-Four honesty rules are built into the semantics:
+Five honesty rules are built into the semantics:
 
-1. ``shortfall_minutes`` is arithmetic (owed minus delivered), not an
-   accusation. Absent evidence looks identical to non-delivery in the
+1. ``shortfall_minutes`` is arithmetic (owed minus delivered minus excused),
+   not an accusation. Absent evidence looks identical to non-delivery in the
    subtraction, so the subtraction alone must never be read as a finding.
 2. ``undocumented_minutes`` is the correction for that. It is the portion of
    the shortfall for which the district has produced no record either way — no
@@ -26,19 +26,46 @@ Four honesty rules are built into the semantics:
    tell" into "documented", stripping the hedge that protects the school. See
    :func:`reconcile` for the full rule and ``discovery.py`` for the silence half
    of the contract.
-4. Nothing is silently dropped. Every event inside the window is counted in
+4. **A session the child was away for is not a shortfall.**
+   ``excused_minutes`` is the portion of the promise that falls on a date some
+   record notes the student as absent (``Attribution.STUDENT_ABSENCE``, stamped
+   in ``correspondence.py``). Those minutes are subtracted from the shortfall
+   rather than asked for back. Nothing about it is a concession: the school is
+   not being credited with a delivery, and the child is not being blamed for
+   anything. It is arithmetic on attendance, and it exists because the fastest
+   way to lose a shortfall claim is to bill a district for a day the child was
+   home sick — one such line and every other figure in the letter is suspect.
+   ``owed_minutes`` is untouched by it: the IEP promised what it promised.
+
+   The bucket is bounded as tightly as it is filled, because an over-large
+   excused figure erases a real shortfall just as surely as an over-large
+   shortfall invents one. An absence excuses only the sessions the IEP's own
+   frequency says could have fallen inside it (:func:`_sessions_displaced`),
+   at the rate of the obligation in force that day, and never more than one
+   session per absence date.
+5. Nothing is silently dropped. Every event inside the window is counted in
    ``events_considered``, every matched event becomes exactly one
    ``EvidenceRef`` on exactly one line, and the ones that bind to no active
    obligation are retrievable via :func:`unmatched_events`.
 
-Two invariants every caller may rely on::
+Three invariants every caller may rely on::
 
     0 <= undocumented_minutes <= shortfall_minutes <= owed_minutes
+
+    delivered + excused + undocumented + evidenced == owed
+        where evidenced = shortfall_minutes - undocumented_minutes,
+        whenever delivered + excused <= owed (i.e. nothing over-delivered)
 
     result.events_considered - sum(len(line.evidence) for line in
         result.shortfalls) == len(unmatched_events(...))
 
-The second one matters: ``ReconciliationResult`` has no unmatched-event field,
+The second one is what "no double counting" means concretely: the four buckets
+partition the promise. A minute is delivered, or excused, or short with no
+record either way, or short with a record — never two of those. Excused and
+undocumented in particular cannot overlap, because a date carrying an absence
+record is a date somebody wrote something down about.
+
+The third one matters: ``ReconciliationResult`` has no unmatched-event field,
 so that subtraction is how a caller holding only the result detects that
 in-window records bound to nothing and the row it is about to send may
 therefore be overstated. A non-zero difference means "ask :func:`unmatched_events`
@@ -54,6 +81,7 @@ from datetime import date, timedelta
 from fractions import Fraction
 
 from .models import (
+    Attribution,
     EvidenceRef,
     IEPLedger,
     Period,
@@ -157,6 +185,45 @@ _PARENTHETICAL = re.compile(r"\([^)]*\)")
 # "no record either way" bucket. Everything else — a parent's log, a documented
 # silence — leaves the slot undocumented on purpose. See rule 3 at module top.
 _DISTRICT_ANSWERABLE = frozenset({Provenance.SCHOOL_CONFIRMED})
+
+ABSENCE_NOTE = "the record for this date notes the student was absent"
+"""How an excused non-delivery says so inside its own ``EvidenceRef.detail``.
+
+``EvidenceRef`` carries no attribution field, and a letter compiler holding
+only a :class:`~minutes.models.ServiceShortfall` still has to footnote its
+"these minutes are excluded" sentence to the records that excuse them. This
+constant is that contract, published so ``letters.py`` selects those refs by
+importing it rather than by re-typing the sentence. It stays out of ``__all__``
+deliberately: that list pins the calling surface of this module, and this is a
+string one module reads out of another's output.
+"""
+
+NON_DELIVERY_NOTE = "recorded as not delivered"
+"""How a non-delivery says so inside its own ``EvidenceRef.detail``.
+
+The other half of the same contract. A letter footnoting "district records
+account for N of those minutes as delivered" must not hang a record of a
+session that did NOT happen underneath it — least of all an absence record,
+which is the one the letter has just used to give minutes up. Selecting on
+this note is how ``letters.py`` keeps each footnote list supporting the
+sentence it is attached to.
+"""
+
+_DETAIL_DATE = re.compile(r"^(\d{4}-\d{2}-\d{2}):")
+
+
+def evidence_date(ref: EvidenceRef) -> date | None:
+    """The calendar date a ref written by this module speaks about, or None.
+
+    Every observed-fact detail :func:`_evidence_ref` writes opens with its own
+    ISO date, so a letter can say "absent on 2026-10-14" rather than "absent on
+    dates in this period" — a plural that reads as several absences where the
+    records hold one. Refs assembled elsewhere (a records-request silence, a
+    quoted IEP provision) carry no leading date and return None, and callers
+    fall back to prose that claims no count.
+    """
+    match = _DETAIL_DATE.match(ref.detail)
+    return date.fromisoformat(match.group(1)) if match else None
 
 
 def _normalize(service: str) -> str:
@@ -371,6 +438,12 @@ def _evidence_ref(event: ServiceEvent) -> EvidenceRef:
     branches on provenance before ``delivered``: a documented silence speaks
     about the missing record, never about the session, which is the one claim
     silence can never establish.
+
+    A non-delivery the record attributes to the child's absence says so, in
+    those neutral terms. The footnote has to carry it: the letter that excludes
+    those minutes cites this ref for the exclusion, and a reader of the
+    footnotes alone should be able to see why the difference is smaller than
+    owed minus delivered.
     """
     if event.provenance is Provenance.DOCUMENTED_SILENCE:
         detail = (
@@ -389,6 +462,8 @@ def _evidence_ref(event: ServiceEvent) -> EvidenceRef:
             f"{event.event_date.isoformat()}: {event.service} session recorded "
             f"as not delivered"
         )
+        if event.attribution is Attribution.STUDENT_ABSENCE:
+            detail += f"; {ABSENCE_NOTE}"
     return EvidenceRef(provenance=event.provenance, source=event.source, detail=detail)
 
 
@@ -421,6 +496,14 @@ def unmatched_events(
     ]
 
 
+def _by_date(matched: list[ServiceEvent]) -> dict[date, list[ServiceEvent]]:
+    """Records grouped by the calendar date they speak about."""
+    by_date: dict[date, list[ServiceEvent]] = {}
+    for event in matched:
+        by_date.setdefault(event.event_date, []).append(event)
+    return by_date
+
+
 def _delivered_by_date(matched: list[ServiceEvent]) -> dict[date, list[ServiceEvent]]:
     """The records that decide delivery on each date, duplicates resolved.
 
@@ -434,17 +517,113 @@ def _delivered_by_date(matched: list[ServiceEvent]) -> dict[date, list[ServiceEv
     make no delivery claim at all (a documented silence) are excluded here; they
     remain evidence, they simply do not decide what was delivered.
     """
-    by_date: dict[date, list[ServiceEvent]] = {}
-    for event in matched:
-        if event.provenance is Provenance.DOCUMENTED_SILENCE:
-            continue
-        by_date.setdefault(event.event_date, []).append(event)
+    speaking = [e for e in matched if e.provenance is not Provenance.DOCUMENTED_SILENCE]
 
     resolved: dict[date, list[ServiceEvent]] = {}
-    for day, records in by_date.items():
+    for day, records in _by_date(speaking).items():
         district = [e for e in records if e.provenance is Provenance.SCHOOL_CONFIRMED]
         resolved[day] = district or records
     return resolved
+
+
+def _sessions_displaced(obligation: ServiceObligation, days: set[date]) -> int:
+    """How many of ``obligation``'s sessions an absence on ``days`` could have cost.
+
+    Counting absence dates and pricing each at a full session is the mistake
+    this function exists to prevent. A child out sick for a week misses five
+    school days, but a service delivered once a week had one session in that
+    week — excusing five would erase four sessions the district still owes,
+    and erasing a shortfall is the same failure as inventing one, pointed the
+    other way.
+
+    So the count is bounded twice:
+
+    * by the number of distinct dates, since one date is one promised slot; and
+    * by what this obligation could have scheduled across the span the absence
+      covers, computed from the IEP's own frequency.
+
+    The second bound is rounded UP, deliberately. A weekly service over a
+    one-day span works out to a fifth of a session, and flooring that to zero
+    would refuse to excuse the single most common case there is — a provider
+    writing "she was out today so we missed OT", which is itself a record that
+    a session was scheduled that day. Rounding up says: at most one session
+    can hide inside one date. It is the pairing with the first bound that does
+    the work, because five dates against a weekly service still come out at
+    one session, not five.
+
+    No holiday calendar applies here, exactly as in :func:`expected_sessions`.
+    """
+    if not days:
+        return 0
+    span = _overlap(obligation.start_date, obligation.end_date, min(days), max(days))
+    if span is None:
+        return 0
+    scheduled = Fraction(
+        _school_days(*span) * obligation.sessions_per_period,
+        SCHOOL_DAYS_PER_PERIOD[obligation.period],
+    )
+    return min(len(days), math.ceil(scheduled))
+
+
+def _excused(
+    obligations: list[ServiceObligation], excused_dates: set[date], start: date, end: date
+) -> tuple[int, int]:
+    """``(sessions, minutes)`` excused across the obligations grouped as one service.
+
+    Each date is charged to the obligation actually in force on it, and priced
+    at that obligation's own ``minutes_per_session`` rather than at a blended
+    average over the group — two IEP lines for one service (a mid-year
+    amendment, say) can promise 30 minutes and 90, and averaging them would
+    excuse 60 for an absence on a day only the 30-minute line was in force.
+    A date in force under both lines is charged once, to the first.
+
+    Each obligation is additionally capped at the sessions it was owed in the
+    window: an absence can never excuse more than was promised.
+    """
+    sessions = 0
+    minutes = 0
+    charged: set[date] = set()
+    for obligation in obligations:
+        days = {
+            day
+            for day in excused_dates - charged
+            if obligation.start_date <= day <= obligation.end_date
+        }
+        charged |= days
+        count = min(
+            _sessions_displaced(obligation, days), expected_sessions(obligation, start, end)
+        )
+        sessions += count
+        minutes += count * obligation.minutes_per_session
+    return sessions, minutes
+
+
+def _excused_dates(matched: list[ServiceEvent]) -> set[date]:
+    """Dates whose session went unheld because the child was away.
+
+    One calendar date is one promised slot, so this counts dates rather than
+    records: the provider's email and the parent's log about the same absence
+    excuse one session between them, not two.
+
+    Two rules, both resolved away from asking for minutes the school could not
+    have delivered:
+
+    * ANY matched record attributing the miss to the child's absence excuses
+      the date, including the parent's own log where the district's record
+      gives no reason. Unlike ``_delivered_by_date``, the district's record
+      does not get to overrule the family here: an absence noted in the
+      family's own log costs the family minutes it could otherwise have
+      claimed, which is not a note anyone writes carelessly.
+    * A date some record says a session was held on is never excused, whatever
+      else is written about it. Those minutes are already counted as delivered,
+      and excusing them too would subtract one slot twice.
+    """
+    return {
+        day
+        for day, records in _by_date(matched).items()
+        if not any(_claims_delivery(event) for event in records)
+        and any(event.attribution is Attribution.STUDENT_ABSENCE for event in records)
+    }
 
 
 def reconcile(
@@ -468,14 +647,28 @@ def reconcile(
     * ``school_confirmed_minutes`` / ``parent_observed_minutes`` --- that same
       delivered total split by evidence grade. They always sum to
       ``delivered_minutes``.
+    * ``excused_minutes`` --- the sessions an absence could actually have
+      displaced (see :func:`_excused_dates` for which dates count and
+      :func:`_sessions_displaced` for how many sessions they are worth),
+      priced at the ``minutes_per_session`` of the obligation in force on the
+      date, and capped at what is left of the promise after delivery. A
+      five-day absence against a weekly service excuses one session, not five.
+      ``owed_minutes`` is not reduced by any of it: the IEP promised what it
+      promised, and a letter that quietly shrank the promise would be
+      unreadable against the IEP itself.
     * ``undocumented_minutes`` --- promised sessions the district has produced
-      no record for, in either direction, priced at the obligation's own
-      per-session rate, rounded up, and capped at the shortfall. Delivered
-      minutes in excess of the promise absorb it.
-    * ``shortfall_minutes`` --- owed minus delivered, floored at zero. When a
-      window holds no evidence at all this equals ``owed_minutes``; that is
-      subtraction, not a finding of non-delivery, which is precisely why
-      ``undocumented_minutes`` is reported beside it.
+      no record for, in either direction, priced at the group's average
+      per-session rate, rounded up, and capped at the shortfall. (That average
+      is exact for the usual case of one obligation per service, and is a
+      blend where an amendment put two lines of different lengths under one
+      service name.) Delivered minutes in excess of the promise absorb it.
+      Excused sessions are never also undocumented: a session an absence
+      accounts for is a session somebody wrote something down about, so it is
+      struck from this count before the pricing.
+    * ``shortfall_minutes`` --- owed minus delivered minus excused, floored at
+      zero. When a window holds no evidence at all this equals
+      ``owed_minutes``; that is subtraction, not a finding of non-delivery,
+      which is precisely why ``undocumented_minutes`` is reported beside it.
 
     WHICH RECORDS RETIRE A PROMISED SESSION, and why it is only one of the
     three grades:
@@ -499,6 +692,14 @@ def reconcile(
 
     A promised slot is a calendar date, not a record, so several records for one
     date retire one slot.
+
+    The four buckets partition the promise, which is the property everything
+    downstream is allowed to rely on::
+
+        delivered + excused + undocumented + (shortfall - undocumented) == owed
+
+    for any window in which delivery and excused minutes together do not
+    exceed what was owed. No minute is ever in two of them.
 
     ``period_start`` and ``period_end`` on each line are the window clipped to
     the obligation's own dates, falling back to the requested window for a
@@ -560,17 +761,37 @@ def reconcile(
             event.minutes for event in delivered
             if event.provenance is Provenance.PARENT_OBSERVED
         )
-        shortfall_minutes = max(0, owed_minutes - delivered_minutes)
+        per_session = Fraction(owed_minutes, sessions_owed) if sessions_owed else Fraction(0)
 
-        # One promised session slot is one calendar date. A slot is retired from
-        # "no record either way" only by a record the district produced.
+        # An absence excuses the sessions it could actually have displaced, at
+        # the rate the obligation in force that day promises — not one full
+        # session per date it was written down on. Then capped at what the
+        # promise has left after delivery, so an excused session can shrink the
+        # claim but never invent minutes to shrink it by.
+        excused_dates = _excused_dates(matched)
+        excused_sessions, excused_priced = _excused(obligations, excused_dates, start, end)
+        excused_minutes = min(max(0, owed_minutes - delivered_minutes), excused_priced)
+        shortfall_minutes = max(0, owed_minutes - delivered_minutes - excused_minutes)
+
+        # A slot is retired from "no record either way" only by a record the
+        # district produced — or by an absence, which is a record of why the
+        # session did not happen and is already out of the shortfall. Counting
+        # an excused slot here as well would put one slot in two buckets.
+        #
+        # Excused SESSIONS, not excused dates: five parent-logged absence dates
+        # against a weekly service account for the one session they displaced,
+        # and the other slots in that stretch are still slots nobody recorded
+        # anything about. (Where the cap above bit, delivery has already
+        # covered the promise and the undocumented figure is floored at zero by
+        # the shortfall anyway.)
         documented_dates = {
             event.event_date
             for event in matched
             if event.provenance in _DISTRICT_ANSWERABLE
         }
-        sessions_undocumented = max(0, sessions_owed - len(documented_dates))
-        per_session = Fraction(owed_minutes, sessions_owed) if sessions_owed else Fraction(0)
+        sessions_undocumented = max(
+            0, sessions_owed - len(documented_dates - excused_dates) - excused_sessions
+        )
         # Rounded up: a fraction of a minute belongs in "we cannot tell", never
         # in the documented shortfall.
         undocumented_minutes = min(
@@ -584,6 +805,7 @@ def reconcile(
                 period_end=period_end,
                 owed_minutes=owed_minutes,
                 delivered_minutes=delivered_minutes,
+                excused_minutes=excused_minutes,
                 shortfall_minutes=shortfall_minutes,
                 school_confirmed_minutes=school_confirmed,
                 parent_observed_minutes=parent_observed,

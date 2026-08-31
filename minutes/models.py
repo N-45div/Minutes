@@ -80,6 +80,27 @@ class Provenance(str, Enum):
     DOCUMENTED_SILENCE = "documented_silence"
 
 
+class Attribution(str, Enum):
+    """What the record says a non-delivery is about. Never a finding of fault.
+
+    A session that did not happen is not automatically a shortfall. Where the
+    record reporting it also reports that the child was away, the school could
+    not have delivered it, and a compensatory demand built on that session
+    hands the district the one answer that puts every other figure in the
+    letter in doubt. So the distinction is carried on the fact itself.
+
+    STUDENT_ABSENCE is a fact about ATTENDANCE. It is never an admission about
+    the school and never a claim against the child; it exists so those minutes
+    can be excluded from what is asked for, and said so plainly.
+
+    SCHOOL_OR_UNRECORDED is the default because it asserts nothing at all: it
+    covers a miss the district's own record explains and a miss no record
+    explains, which are the same thing to this ledger."""
+
+    SCHOOL_OR_UNRECORDED = "school_or_unrecorded"
+    STUDENT_ABSENCE = "student_absence"
+
+
 class ServiceEvent(BaseModel):
     """One observed delivery or non-delivery fact."""
 
@@ -89,6 +110,7 @@ class ServiceEvent(BaseModel):
     delivered: bool
     provenance: Provenance
     source: str = Field(description="Where this fact came from, e.g. an email id, a parent log entry, a records-request id")
+    attribution: Attribution = Attribution.SCHOOL_OR_UNRECORDED
 
 
 class Accommodation(BaseModel):
@@ -156,6 +178,11 @@ class ServiceShortfall(BaseModel):
     period_end: date
     owed_minutes: int = Field(ge=0)
     delivered_minutes: int = Field(ge=0)
+    excused_minutes: int = Field(
+        default=0,
+        ge=0,
+        description="Owed minutes on dates a record notes the student was absent; excluded from the shortfall",
+    )
     shortfall_minutes: int = Field(ge=0)
     school_confirmed_minutes: int = Field(ge=0)
     parent_observed_minutes: int = Field(ge=0)
@@ -258,6 +285,7 @@ class StatementLine(BaseModel):
     service: str
     owed_minutes: int = Field(ge=0)
     delivered_minutes: int = Field(ge=0)
+    excused_minutes: int = Field(default=0, ge=0)
     shortfall_minutes: int = Field(ge=0)
     school_confirmed_minutes: int = Field(ge=0)
     parent_observed_minutes: int = Field(ge=0)

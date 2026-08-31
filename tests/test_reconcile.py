@@ -25,11 +25,14 @@ All students, schools and records below are synthetic.
 """
 
 from datetime import date
+from pathlib import Path
 
 import pytest
 
 from minutes import reconcile as reconcile_module
+from minutes.correspondence import load_cached_events
 from minutes.models import (
+    Attribution,
     IEPLedger,
     Period,
     Provenance,
@@ -37,6 +40,7 @@ from minutes.models import (
     ServiceObligation,
 )
 from minutes.reconcile import (
+    ABSENCE_NOTE,
     CALENDAR_MONTHS_PER_PERIOD,
     SCHOOL_DAYS_PER_PERIOD,
     canonical_service,
@@ -119,6 +123,18 @@ def missed(
         delivered=False,
         provenance=provenance,
         source=source or f"log-{day.isoformat()}",
+    )
+
+
+def absent(
+    day: date,
+    service: str = "Speech-Language Therapy",
+    provenance: Provenance = Provenance.SCHOOL_CONFIRMED,
+    source: str | None = None,
+) -> ServiceEvent:
+    """A non-delivery the source document attributes to the child being away."""
+    return missed(day, service, provenance, source).model_copy(
+        update={"attribution": Attribution.STUDENT_ABSENCE}
     )
 
 
@@ -574,6 +590,129 @@ def test_a_delivery_claimed_on_a_silence_record_is_disregarded():
     assert line.undocumented_minutes == 240
     assert "not counted" in line.evidence[0].detail
     assert "recorded as delivered" not in line.evidence[0].detail
+
+
+# --------------------------------------------------------------------------
+# Excused non-delivery — the sessions the child's own absence cost
+#
+# Every figure below is hand-computed against the standard window: 8 promised
+# sessions of 30 minutes, 240 minutes owed. An excused session is subtracted
+# from the difference and never from the promise, because a letter that
+# reported a smaller "owed" could not be checked against the IEP it quotes.
+# --------------------------------------------------------------------------
+
+
+def test_a_session_the_child_was_absent_for_is_not_part_of_the_difference():
+    # Six sessions held (180), one missed by the school, one missed because
+    # Maya was out. 240 - 180 - 30 = 30 is the difference the letter may claim.
+    events = [held(d) for d in SESSION_DAYS[:6]]
+    events.append(missed(SESSION_DAYS[6]))
+    events.append(absent(SESSION_DAYS[7]))
+    line = only(reconcile(ledger(obligation()), events, WINDOW_START, WINDOW_END))
+
+    assert line.owed_minutes == 240  # the promise is untouched
+    assert line.delivered_minutes == 180
+    assert line.excused_minutes == 30
+    assert line.shortfall_minutes == 30
+    assert line.undocumented_minutes == 0
+
+
+def test_an_excused_session_is_never_counted_as_delivered():
+    # All eight sessions fell on days the child was absent. Nothing was
+    # delivered and nothing is short, and the two facts are not the same one.
+    line = only(reconcile(ledger(obligation()), [absent(d) for d in SESSION_DAYS], WINDOW_START, WINDOW_END))
+
+    assert line.delivered_minutes == 0
+    assert line.school_confirmed_minutes == 0
+    assert line.parent_observed_minutes == 0
+    assert line.excused_minutes == 240
+    assert line.shortfall_minutes == 0
+
+
+def test_an_excused_session_keeps_its_evidence_and_says_why():
+    # Excluded from the arithmetic, still on the record: the footnote is how a
+    # reader sees why the difference is smaller than owed minus delivered.
+    line = only(reconcile(ledger(obligation()), [absent(date(2026, 10, 14))], WINDOW_START, WINDOW_END))
+
+    assert len(line.evidence) == 1
+    assert "2026-10-14" in line.evidence[0].detail
+    assert ABSENCE_NOTE in line.evidence[0].detail
+
+
+def test_an_ordinary_miss_is_not_footnoted_as_an_absence():
+    line = only(reconcile(ledger(obligation()), [missed(date(2026, 10, 14))], WINDOW_START, WINDOW_END))
+
+    assert ABSENCE_NOTE not in line.evidence[0].detail
+    assert line.excused_minutes == 0
+
+
+def test_one_absence_recorded_twice_excuses_one_session():
+    # The provider's email and the parent's log describe the same absence. One
+    # calendar date is one promised slot, so 30 minutes come out, not 60.
+    events = [
+        absent(date(2026, 10, 14), source="email-2026-10-14-01"),
+        absent(date(2026, 10, 14), provenance=Provenance.PARENT_OBSERVED, source="plog-2026-10-14-01"),
+    ]
+    line = only(reconcile(ledger(obligation()), events, WINDOW_START, WINDOW_END))
+
+    assert line.excused_minutes == 30
+    assert line.shortfall_minutes == 210
+    assert len(line.evidence) == 2
+
+
+def test_a_parent_logged_absence_excuses_a_miss_the_district_left_unexplained():
+    # The district records the session as not held and gives no reason; the
+    # family's own log says why. An absence noted at home costs the family
+    # minutes it could otherwise have claimed, so it is believed.
+    events = [
+        missed(date(2026, 10, 14), source="svclog-001"),
+        absent(date(2026, 10, 14), provenance=Provenance.PARENT_OBSERVED, source="plog-2026-10-14-01"),
+    ]
+    line = only(reconcile(ledger(obligation()), events, WINDOW_START, WINDOW_END))
+
+    assert line.excused_minutes == 30
+    assert line.shortfall_minutes == 210
+    # Seven slots carry no record at all; the eighth is accounted for by both.
+    assert line.undocumented_minutes == 210
+
+
+def test_a_date_with_a_delivery_record_is_never_also_excused():
+    # Those minutes are already counted as delivered. Excusing them as well
+    # would subtract one promised slot twice and understate the difference.
+    events = [
+        held(date(2026, 10, 14), source="svclog-001"),
+        absent(date(2026, 10, 14), provenance=Provenance.PARENT_OBSERVED, source="plog-2026-10-14-01"),
+    ]
+    line = only(reconcile(ledger(obligation()), events, WINDOW_START, WINDOW_END))
+
+    assert line.delivered_minutes == 30
+    assert line.excused_minutes == 0
+    assert line.shortfall_minutes == 210
+
+
+def test_excused_minutes_cannot_exceed_what_the_promise_has_left():
+    # Four double-length sessions already cover all 240 promised minutes. An
+    # absence on a fifth date excuses nothing, because there is nothing left to
+    # excuse and a bucket may never manufacture minutes to fill itself.
+    days = [date(2026, 10, 5), date(2026, 10, 12), date(2026, 10, 19), date(2026, 10, 26)]
+    events = [held(d, minutes=60) for d in days] + [absent(date(2026, 10, 28))]
+    line = only(reconcile(ledger(obligation()), events, WINDOW_START, WINDOW_END))
+
+    assert line.delivered_minutes == 240
+    assert line.excused_minutes == 0
+    assert line.shortfall_minutes == 0
+
+
+def test_an_excused_session_is_never_also_undocumented():
+    # The one date anybody wrote anything about is the absence, and it is
+    # already out of the difference. Counting it as "no record either way"
+    # would put one promised slot in two buckets at once.
+    events = [absent(date(2026, 10, 14), provenance=Provenance.PARENT_OBSERVED, source="plog-1")]
+    line = only(reconcile(ledger(obligation()), events, WINDOW_START, WINDOW_END))
+
+    assert line.excused_minutes == 30
+    assert line.shortfall_minutes == 210
+    assert line.undocumented_minutes == 210  # the other seven slots, not the eighth
 
 
 # --------------------------------------------------------------------------
@@ -1052,3 +1191,326 @@ def test_the_reported_invariant_holds(events, owed, delivered, shortfall, undocu
     # The guards the module publishes, restated over the same cases.
     assert 0 <= line.undocumented_minutes <= line.shortfall_minutes <= line.owed_minutes
     assert line.school_confirmed_minutes + line.parent_observed_minutes == line.delivered_minutes
+
+
+# --------------------------------------------------------------------------
+# The bucket invariant
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "events, delivered, excused, undocumented, shortfall",
+    [
+        # Nothing on file: the whole promise is short and none of it is
+        # documented either way.
+        ([], 0, 0, 240, 240),
+        # Eight sessions held.
+        ([held(d) for d in SESSION_DAYS], 240, 0, 0, 0),
+        # Eight sessions the district's own log records as not held: short in
+        # full, and documented in full.
+        ([missed(d) for d in SESSION_DAYS], 0, 0, 0, 240),
+        # Eight sessions the child was away for: nothing delivered, nothing
+        # short, and the two facts are not the same one.
+        ([absent(d) for d in SESSION_DAYS], 0, 240, 0, 0),
+        # Four held (120), four excused (4 x 30 = 120).
+        (
+            [held(d) for d in SESSION_DAYS[:4]] + [absent(d) for d in SESSION_DAYS[4:]],
+            120,
+            120,
+            0,
+            0,
+        ),
+        # One of each grade. 30 delivered, 30 excused, so 180 short. Three
+        # slots are accounted for (two district records plus the excused
+        # session; the silence accounts for nothing by contract), leaving five
+        # of the eight at 30 minutes = 150 undocumented, and 30 of the
+        # shortfall evidenced by the district's own missed-session record.
+        (
+            [held(SESSION_DAYS[0]), missed(SESSION_DAYS[1]), absent(SESSION_DAYS[2]),
+             silence(SESSION_DAYS[3])],
+            30,
+            30,
+            150,
+            180,
+        ),
+        # The district records the miss and gives no reason; the family's log
+        # says why. One slot, one excused session, seven slots unrecorded.
+        (
+            [absent(SESSION_DAYS[0], provenance=Provenance.PARENT_OBSERVED, source="plog-1"),
+             missed(SESSION_DAYS[0], source="svclog-1")],
+            0,
+            30,
+            210,
+            210,
+        ),
+        # A 60-minute session held on the same date the family logged an
+        # absence. Those minutes are already delivered, so excusing them too
+        # would subtract one slot twice. One slot is documented, the other
+        # seven are worth 210 and the shortfall caps them at 180.
+        (
+            [held(SESSION_DAYS[0], minutes=60),
+             absent(SESSION_DAYS[0], provenance=Provenance.PARENT_OBSERVED, source="plog-1")],
+            60,
+            0,
+            180,
+            180,
+        ),
+        # Over-delivery: 270 minutes across three long sessions covers the
+        # whole 240 promise, so the absence on a fourth date has nothing left
+        # to excuse.
+        ([held(d, minutes=90) for d in SESSION_DAYS[:3]] + [absent(SESSION_DAYS[3])], 270, 0, 0, 0),
+    ],
+    ids=[
+        "nothing",
+        "everything-delivered",
+        "everything-missed",
+        "everything-excused",
+        "half-delivered-half-excused",
+        "one-of-each-grade",
+        "parent-absence-over-district-miss",
+        "delivery-and-absence-on-one-date",
+        "over-delivery-with-an-absence",
+    ],
+)
+def test_the_four_buckets_partition_the_promise(events, delivered, excused, undocumented, shortfall):
+    """No minute is in two buckets, and none goes missing between them.
+
+    Delivered, excused, undocumented and evidenced-short are the four things a
+    promised minute can be, and the letter, the Statement and the parent all
+    read the difference as owed minus the first two. If they did not add up,
+    some minutes would be silently dropped or silently counted twice --- and
+    counted twice, in the only direction that matters, means asked for twice.
+
+    Every figure is a hand-computed literal, and that is the point. The
+    addition ``delivered + excused + undocumented + (shortfall - undocumented)``
+    is an algebraic identity over whatever this module returns: it holds just
+    as well when a date is double-excused, when five absence dates excuse five
+    sessions of a weekly service, or when an excused session is priced at ten
+    times its rate. An invariant that cannot fail is not an invariant, so the
+    identity is checked *underneath* five pinned numbers rather than instead of
+    them, and two bounds the identity cannot absorb are checked beside it: an
+    excused session is never worth more than a session, and there are never
+    more of them than there are dates a record notes an absence on.
+
+    Over-delivery is the one case where the sum exceeds the promise rather
+    than equalling it: minutes delivered beyond what was owed are still real,
+    the shortfall is floored at zero, and nothing is short.
+    """
+    line = only(reconcile(ledger(obligation()), events, WINDOW_START, WINDOW_END))
+
+    assert line.owed_minutes == SPEECH_OWED  # never reduced by any of the others
+    assert line.delivered_minutes == delivered
+    assert line.excused_minutes == excused
+    assert line.undocumented_minutes == undocumented
+    assert line.shortfall_minutes == shortfall
+
+    # Slot-level bounds. Neither follows from the arithmetic above, which is
+    # why they are the two that catch an over-large excused bucket.
+    minutes_per_session = SPEECH_OWED // SPEECH_SESSIONS
+    absence_dates = {e.event_date for e in events if e.attribution is Attribution.STUDENT_ABSENCE}
+    assert line.excused_minutes <= len(absence_dates) * minutes_per_session
+    assert line.excused_minutes <= SPEECH_SESSIONS * minutes_per_session
+
+    evidenced = line.shortfall_minutes - line.undocumented_minutes
+    assert evidenced >= 0
+    buckets = (
+        line.delivered_minutes + line.excused_minutes + line.undocumented_minutes + evidenced
+    )
+    assert buckets == max(line.owed_minutes, line.delivered_minutes + line.excused_minutes)
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        [absent(d) for d in SESSION_DAYS],
+        [held(d) for d in SESSION_DAYS[:4]] + [absent(d) for d in SESSION_DAYS[4:]],
+        [absent(SESSION_DAYS[0], provenance=Provenance.PARENT_OBSERVED, source="plog-1"),
+         missed(SESSION_DAYS[0], source="svclog-1")],
+        [held(SESSION_DAYS[0], minutes=60), absent(SESSION_DAYS[1])],
+    ],
+    ids=["all", "half", "parent-log-only", "one-of-eight"],
+)
+def test_excused_minutes_never_arrive_without_the_record_that_excused_them(events):
+    """The contract ``letters.py`` rests on when it footnotes the exclusion.
+
+    A line reporting excused minutes with no absence record on it would leave
+    the letter with an uncitable claim about the child --- and the letter drops
+    that claim rather than assert it, so the exclusion would go unexplained
+    beside a difference smaller than owed minus delivered. Excused minutes come
+    from matched absence events, and every matched event becomes a footnote, so
+    the two cannot come apart here.
+    """
+    line = only(reconcile(ledger(obligation()), events, WINDOW_START, WINDOW_END))
+
+    assert line.excused_minutes > 0
+    assert [ref for ref in line.evidence if ABSENCE_NOTE in ref.detail]
+
+
+# --------------------------------------------------------------------------
+# What an absence is allowed to be worth
+# --------------------------------------------------------------------------
+
+
+def test_a_week_of_absences_excuses_only_the_sessions_that_week_held():
+    """Five absence dates against a once-a-week service excuse ONE session.
+
+    The child is out sick for a week and the parent logs all five school days.
+    Pricing each date at a full session would excuse 150 minutes of a promise
+    that only ever put one session inside that week --- erasing the three
+    sessions owed in the weeks either side of it. Erasing a shortfall is the
+    same failure as inventing one, pointed the other way.
+    """
+    weekly = obligation(sessions_per_period=1)
+    week = [date(2026, 10, 12), date(2026, 10, 13), date(2026, 10, 14),
+            date(2026, 10, 15), date(2026, 10, 16)]
+    events = [
+        absent(day, provenance=Provenance.PARENT_OBSERVED, source=f"plog-{day.isoformat()}")
+        for day in week
+    ]
+    line = only(reconcile(ledger(weekly), events, WINDOW_START, WINDOW_END))
+
+    assert line.owed_minutes == 120  # 20 school days x 1 per week = 4 sessions
+    assert line.excused_minutes == 30
+    assert line.shortfall_minutes == 90
+    # The three sessions in the weeks either side are still slots nobody
+    # recorded anything about --- the absence week does not document them.
+    assert line.undocumented_minutes == 90
+
+
+def test_a_five_day_absence_of_a_daily_service_excuses_all_five():
+    """The same rule the other way: a daily service really did lose five."""
+    daily = obligation(minutes_per_session=60, sessions_per_period=1, period=Period.DAY)
+    week = [date(2026, 10, 12), date(2026, 10, 13), date(2026, 10, 14),
+            date(2026, 10, 15), date(2026, 10, 16)]
+    line = only(reconcile(ledger(daily), [absent(day) for day in week], WINDOW_START, WINDOW_END))
+
+    assert line.owed_minutes == 1200  # 20 school days x 60 minutes
+    assert line.excused_minutes == 300
+    assert line.shortfall_minutes == 900
+
+
+def test_one_absence_date_is_worth_at_most_one_session():
+    daily = obligation(minutes_per_session=60, sessions_per_period=1, period=Period.DAY)
+    line = only(reconcile(ledger(daily), [absent(date(2026, 10, 14))], WINDOW_START, WINDOW_END))
+
+    assert line.excused_minutes == 60
+    assert line.shortfall_minutes == 1140
+
+
+def test_an_absence_is_priced_at_the_obligation_in_force_that_day():
+    """Two IEP lines for one service, of different lengths.
+
+    A mid-year amendment leaves 30-minute sessions in force until 2026-10-20
+    and 90-minute sessions after it. Pricing an absence at the group's blended
+    average (150 owed over 3 sessions = 50) would excuse 50 minutes for a day
+    on which only the 30-minute line was in force.
+    """
+    before = obligation(
+        service="Speech Therapy",
+        minutes_per_session=30,
+        sessions_per_period=1,
+        start_date=date(2026, 9, 8),
+        end_date=date(2026, 10, 20),
+    )
+    after = obligation(
+        minutes_per_session=90,
+        sessions_per_period=1,
+        start_date=date(2026, 10, 21),
+        end_date=date(2027, 6, 11),
+    )
+    line = only(
+        reconcile(ledger(before, after), [absent(date(2026, 10, 14))], WINDOW_START, WINDOW_END)
+    )
+
+    assert line.owed_minutes == 150  # 2 x 30 before the amendment, 1 x 90 after
+    assert line.excused_minutes == 30
+    assert line.shortfall_minutes == 120
+
+
+def test_a_stretch_with_no_provider_is_never_excused_by_anything():
+    """The shortfall this whole mechanism must not be able to erase."""
+    line = only(reconcile(ledger(obligation()), [missed(d) for d in SESSION_DAYS], WINDOW_START, WINDOW_END))
+
+    assert line.excused_minutes == 0
+    assert line.shortfall_minutes == 240
+
+
+# --------------------------------------------------------------------------
+# The committed fixture semester
+#
+# Read off disk, never off the network: fixtures/cache holds the ledger the
+# extractor produced and the events the classifier produced, both committed.
+# Three of those events are non-deliveries the correspondence attributes to
+# Maya's own absence, and they are the reason this module has an excused
+# bucket at all — so they are pinned here against the arithmetic, not only
+# against the classifier that found them.
+# --------------------------------------------------------------------------
+
+CACHE = Path(__file__).resolve().parents[1] / "fixtures" / "cache"
+SEMESTER_START = date(2026, 9, 8)
+SEMESTER_END = date(2027, 1, 29)
+
+# Read off the fixtures by hand: the OT absence is written twice (the
+# provider's email and the parent's log of the same day), the SAI absence once.
+FIXTURE_ABSENCES = {
+    ("email-2026-10-14-01", date(2026, 10, 14), "Occupational Therapy"),
+    ("plog-2026-10-14-01", date(2026, 10, 14), "Occupational Therapy"),
+    ("email-2027-01-15-01", date(2027, 1, 12), "Specialized Academic Instruction"),
+}
+
+
+def _fixture_semester() -> tuple[IEPLedger, list[ServiceEvent]]:
+    ledger_json = (CACHE / "iep_maya_ledger.json").read_text(encoding="utf-8")
+    return IEPLedger.model_validate_json(ledger_json), load_cached_events()
+
+
+def test_the_three_recorded_absences_are_the_ones_excused():
+    ledger_, events = _fixture_semester()
+
+    attributed = {
+        (e.source, e.event_date, e.service)
+        for e in events
+        if e.attribution is Attribution.STUDENT_ABSENCE
+    }
+    assert attributed == FIXTURE_ABSENCES
+
+    lines = {line.service: line for line in reconcile(ledger_, events, SEMESTER_START, SEMESTER_END).shortfalls}
+    ot = lines["Occupational Therapy"]
+    sai = lines["Specialized Academic Instruction"]
+
+    # OT is 45 minutes once a week and SAI 60 minutes a day, so one excused
+    # session each — and the two records of 2026-10-14 excuse one OT session
+    # between them, not two.
+    assert (ot.owed_minutes, ot.delivered_minutes, ot.excused_minutes, ot.shortfall_minutes) == (900, 630, 45, 225)
+    assert (sai.owed_minutes, sai.delivered_minutes, sai.excused_minutes, sai.shortfall_minutes) == (6240, 0, 60, 6180)
+    assert lines["Speech-Language Therapy"].excused_minutes == 0
+    assert lines["Individual Counseling"].excused_minutes == 0
+
+
+def test_excusing_the_absences_moves_those_minutes_and_no_others():
+    """The whole semester, before and after, as literals.
+
+    7,155 minutes is what this semester reported while an absent child's
+    sessions were still counted in the difference; 7,050 is what it reports
+    now. The 105 between them are the OT session on 2026-10-14 and the SAI
+    session on 2027-01-12, and nothing else moves — least of all what the IEP
+    promised.
+    """
+    ledger_, events = _fixture_semester()
+    unattributed = [
+        e.model_copy(update={"attribution": Attribution.SCHOOL_OR_UNRECORDED}) for e in events
+    ]
+
+    before = reconcile(ledger_, unattributed, SEMESTER_START, SEMESTER_END)
+    after = reconcile(ledger_, events, SEMESTER_START, SEMESTER_END)
+
+    assert before.total_shortfall_minutes == 7155
+    assert after.total_shortfall_minutes == 7050
+    assert sum(line.excused_minutes for line in after.shortfalls) == 105
+
+    for old, new in zip(before.shortfalls, after.shortfalls):
+        assert old.service == new.service
+        assert old.owed_minutes == new.owed_minutes
+        assert old.delivered_minutes == new.delivered_minutes
+        assert old.shortfall_minutes - new.shortfall_minutes == new.excused_minutes
+        assert len(old.evidence) == len(new.evidence)  # nothing was dropped to get there

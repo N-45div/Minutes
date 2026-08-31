@@ -115,6 +115,7 @@ def _shortfall(
     delivered: int = 150,
     confirmed: int = 150,
     observed: int = 0,
+    excused: int = 0,
     undocumented: int = 0,
     start: date = PERIOD_START,
     end: date = PERIOD_END,
@@ -125,7 +126,8 @@ def _shortfall(
         period_end=end,
         owed_minutes=owed,
         delivered_minutes=delivered,
-        shortfall_minutes=owed - delivered,
+        excused_minutes=excused,
+        shortfall_minutes=owed - delivered - excused,
         school_confirmed_minutes=confirmed,
         parent_observed_minutes=observed,
         undocumented_minutes=undocumented,
@@ -581,6 +583,172 @@ def test_evidence_breakdown_is_reported_honestly():
     assert "Nothing this period is confirmed by the school's own records." in markdown
     assert "60 minutes of what was promised have no evidence either way" in markdown
     assert "60 minutes of what was promised have no evidence either way" in _flat(render_text(statement))
+
+
+# ---------------------------------------------------------------------------
+# Minutes excused for a recorded absence
+# ---------------------------------------------------------------------------
+
+
+def test_excused_minutes_get_a_column_so_the_row_still_subtracts():
+    """900 owed, 630 delivered and 225 short only adds up with the 45 in view.
+
+    A parent who cannot see the middle term cannot check the figure that
+    matters, and an unexplained gap between owed minus delivered and the
+    reported shortfall is exactly the kind of arithmetic a district reads as
+    carelessness.
+    """
+    statement = _statement(
+        _result(
+            _shortfall("Occupational Therapy", owed=900, delivered=630, confirmed=630, excused=45)
+        )
+    )
+    markdown_rows = _rows(render_markdown(statement))
+    text_rows = _rows(render_text(statement))
+
+    assert "| Service | Owed | Delivered | Excused | Short |" in markdown_rows
+    for cells in [
+        ("Occupational Therapy", "900 (15h)", "630 (10.5h)", "45", "225"),
+        ("TOTAL", "900 (15h)", "630 (10.5h)", "45", "225"),
+    ]:
+        assert "| " + " | ".join(cells) + " |" in markdown_rows
+        assert " ".join(cells) in text_rows
+
+
+def test_the_excused_column_stays_out_of_a_period_that_excused_nothing():
+    """A column of zeros in every row of every month is noise in the one
+    artifact a parent forwards to a district."""
+    markdown = render_markdown(_statement(_result(_shortfall())))
+
+    assert "| Service | Owed | Delivered | Short |" in _rows(markdown)
+    assert "Excused" not in markdown
+
+
+def test_the_excused_figure_is_explained_where_the_parent_reads_it():
+    statement = _statement(
+        _result(
+            _shortfall("Occupational Therapy", owed=900, delivered=630, confirmed=630, excused=45)
+        )
+    )
+    note = (
+        "45 minutes of what was promised fall on dates a record notes your child was absent."
+    )
+
+    assert note in render_markdown(statement)
+    assert note in _flat(render_text(statement))
+    assert (
+        "45 minutes excluded as falling on dates a record notes your child was absent."
+        in render_markdown(statement)
+    )
+
+
+def test_a_period_short_of_nothing_but_excused_something_does_not_claim_full_delivery():
+    """With minutes excused, "all of it was delivered" is the one thing the
+    figures do not say: part of the promise was not delivered and is not being
+    counted, and the statement has to keep those two apart."""
+    statement = _statement(
+        _result(
+            _shortfall("Occupational Therapy", owed=900, delivered=855, confirmed=855, excused=45)
+        )
+    )
+    markdown = render_markdown(statement)
+
+    assert statement.total_shortfall == 0
+    assert "All 900 minutes" not in markdown
+    assert (
+        "Of 900 minutes (15 hours) promised over these dates, 855 minutes (14.2 hours) are "
+        "documented as delivered and 45 minutes fall on dates a record notes your child was "
+        "absent. Nothing is left short." in markdown
+    )
+
+
+def test_the_lead_never_calls_an_excused_period_a_period_with_no_shortfall():
+    """The lead line is the sentence that gets forwarded.
+
+    "No shortfall this period" is true arithmetic and false news here: none of
+    the 900 minutes promised were delivered, and the shortfall is zero only
+    because every one of them fell on a day a record notes the child was
+    absent. The lead carries both figures or the statement is telling a parent
+    a calm month happened.
+    """
+    statement = _statement(
+        _result(_shortfall("Occupational Therapy", owed=900, delivered=0, confirmed=0, excused=900))
+    )
+    markdown = render_markdown(statement)
+    lead = (
+        "0 minutes of 900 minutes (15 hours) promised are documented as delivered; "
+        "900 minutes (15 hours) fall on dates a record notes your child was absent."
+    )
+
+    assert statement.total_shortfall == 0
+    assert NO_SHORTFALL_HEADLINE not in markdown
+    assert f"**{lead}**" in markdown
+    assert lead in _flat(render_text(statement))
+
+
+def test_an_excused_period_still_says_when_the_reassurance_is_only_your_log():
+    """Nothing short, and not one delivered minute confirmed by the school.
+
+    An excused period is no exception to the rule that a reassurance resting
+    entirely on the family's own log says so where the parent reads it.
+    """
+    statement = _statement(
+        _result(
+            _shortfall(
+                "Occupational Therapy", owed=900, delivered=855, confirmed=0, observed=855, excused=45
+            )
+        )
+    )
+    markdown = render_markdown(statement)
+
+    assert statement.total_shortfall == 0
+    assert "Every minute shown as delivered rests on your own log." in markdown
+    assert "Every minute shown as delivered rests on your own log." in _flat(render_text(statement))
+
+
+def test_an_excused_month_is_never_called_a_quiet_month():
+    """Nothing is short, nothing is undocumented, nothing is outstanding --- and
+    the child still missed part of what the IEP promised. That wants a parent's
+    eyes, not a "nothing needs a decision from you"."""
+    statement = _statement(
+        _result(_shortfall("Occupational Therapy", owed=900, delivered=855, confirmed=855, excused=45))
+    )
+
+    for rendered in (render_markdown(statement), _flat(render_text(statement))):
+        assert QUIET_MONTH_NOTE not in rendered
+
+
+def test_the_statement_offers_the_district_no_excuse_it_was_not_asked_for():
+    """Whether an absence relieves a district of a promised session --- make-up
+    sessions, a pattern of absences that should trigger a team review --- is an
+    individualized question this tool does not answer. The paragraph reports
+    where the minutes went and stops."""
+    statement = _statement(
+        _result(_shortfall("Occupational Therapy", owed=900, delivered=630, confirmed=630, excused=45))
+    )
+    markdown = render_markdown(statement)
+
+    assert (
+        "45 minutes of what was promised fall on dates a record notes your child was absent. "
+        "They are shown in their own column and are not counted as short. This is a note about "
+        "attendance and nothing else" in markdown
+    )
+    assert "the school cannot deliver" not in markdown
+    assert "cannot deliver a session" not in _flat(render_text(statement))
+
+
+def test_excused_minutes_sum_across_the_periods_a_service_was_split_into():
+    statement = _statement(
+        _result(
+            _shortfall(owed=120, delivered=60, confirmed=60, excused=30, start=date(2026, 9, 1), end=date(2026, 9, 15)),
+            _shortfall(owed=120, delivered=90, confirmed=90, excused=15, start=date(2026, 9, 16), end=PERIOD_END),
+        )
+    )
+
+    assert len(statement.lines) == 1
+    line = statement.lines[0]
+    assert line.excused_minutes == 45
+    assert line.owed_minutes - line.delivered_minutes - line.excused_minutes == line.shortfall_minutes
 
 
 # ---------------------------------------------------------------------------

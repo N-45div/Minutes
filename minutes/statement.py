@@ -25,13 +25,18 @@ parent forwards to a district:
    gates a letter. A card whose wording states a conclusion is held back
    with a visible note rather than rendered.
 2. The lead number carries its own correction. ``shortfall_minutes`` is
-   owed minus delivered, and absent evidence subtracts exactly like
-   non-delivery (see :mod:`minutes.reconcile`), so wherever undocumented
+   owed minus delivered minus excused, and absent evidence subtracts exactly
+   like non-delivery (see :mod:`minutes.reconcile`), so wherever undocumented
    minutes are part of the shortfall the headline says so in the same
-   sentence as the figure -- not two sections below it.
+   sentence as the figure -- not two sections below it. Minutes excused for a
+   recorded student absence get their own figure for the same reason: a
+   parent reading "owed 900, delivered 630, short 225" must be able to see
+   where the other 45 went, or the statement is not checkable.
 3. Silence is never dressed up as good news. A period in which nothing
-   could be reconciled, or in which every delivered minute rests on the
-   parent's own log, says exactly that in the opening lines.
+   could be reconciled, in which every delivered minute rests on the
+   parent's own log, or in which the shortfall is zero only because the
+   promise fell on days the child was away, says exactly that in the opening
+   lines -- and is never called a quiet month.
 """
 
 from __future__ import annotations
@@ -179,6 +184,7 @@ _ALLOWED_ANCHORS: frozenset[str] = frozenset(
 _SUMMED_FIELDS = (
     "owed_minutes",
     "delivered_minutes",
+    "excused_minutes",
     "shortfall_minutes",
     "school_confirmed_minutes",
     "parent_observed_minutes",
@@ -397,6 +403,17 @@ def _headline(statement: Statement) -> str:
     if statement.total_owed == 0:
         return NOTHING_SCHEDULED_HEADLINE
     if statement.total_shortfall == 0:
+        excused = _total(statement, "excused_minutes")
+        if excused:
+            # "No shortfall this period" is true arithmetic and false news: a
+            # month in which none of the promise was delivered and all of it
+            # fell on absences would forward as a calm month. The lead carries
+            # both figures instead, and neither one alone.
+            return (
+                f"{_fmt_minutes(statement.total_delivered)} of "
+                f"{_fmt_minutes(statement.total_owed)} promised are documented as delivered; "
+                f"{_fmt_minutes(excused)} fall on dates a record notes your child was absent."
+            )
         return NO_SHORTFALL_HEADLINE
 
     short = _fmt_minutes(statement.total_shortfall)
@@ -421,8 +438,25 @@ def _summary(statement: Statement) -> str | None:
     # Parent-observed minutes are never asserted as established delivery --
     # the same rule letters.py applies to a compiled letter's sentences.
     only_your_log = statement.total_delivered > 0 and confirmed == 0
+    excused = _total(statement, "excused_minutes")
 
     if statement.total_shortfall == 0:
+        # With minutes excused, "all of it was delivered" is the one thing the
+        # figures do not say: some of the promise was not delivered and is not
+        # being counted. The two are said separately or not at all.
+        if excused:
+            sentence = (
+                f"Of {_fmt_minutes(statement.total_owed)} promised over these dates, "
+                f"{_fmt_minutes(statement.total_delivered)} are documented as delivered and "
+                f"{_fmt_minutes(excused)} fall on dates a record notes your child was absent. "
+                "Nothing is left short."
+            )
+            # The same attribution the branch below makes: a reassurance
+            # resting entirely on the family's own log has to say so where the
+            # parent reads it, and an excused period is no exception.
+            if only_your_log:
+                sentence += " Every minute shown as delivered rests on your own log."
+            return sentence
         sentence = (
             f"All {_fmt_minutes(statement.total_owed)} promised over these dates "
             "are documented as delivered"
@@ -436,9 +470,16 @@ def _summary(statement: Statement) -> str | None:
     sentences = [
         f"{_fmt_minutes(statement.total_owed)} owed.",
         f"{delivered}.",
-        f"{short} of {len(statement.lines)} "
-        f"{_plural(len(statement.lines), 'service')} on the ledger came up short.",
     ]
+    if excused:
+        sentences.append(
+            f"{_fmt_minutes(excused)} excluded as falling on dates a record notes your "
+            "child was absent."
+        )
+    sentences.append(
+        f"{short} of {len(statement.lines)} "
+        f"{_plural(len(statement.lines), 'service')} on the ledger came up short."
+    )
     undocumented = _total(statement, "undocumented_minutes")
     if undocumented:
         sentences.append(
@@ -457,39 +498,70 @@ def _is_quiet(statement: Statement) -> bool:
     an empty ledger (nothing extracted, no obligation covering the window, no
     correspondence loaded) is a failure rather than a calm month, so the
     presence of lines is part of the test.
+
+    Excused minutes zero the shortfall the same way, and a month in which the
+    child missed a stretch of her services is not a quiet month either. It is
+    a month whose promise went partly undelivered for a reason nobody is at
+    fault for, which is worth a parent's eyes and not a "nothing needs you".
     """
     pressing = {DeadlineState.OVERDUE, DeadlineState.DUE_SOON}
     return (
         bool(statement.lines)
         and statement.total_shortfall == 0
         and _total(statement, "undocumented_minutes") == 0
+        and _total(statement, "excused_minutes") == 0
         and not statement.decisions
         and not statement.unanswered_requests
         and not any(status.state in pressing for status in statement.open_deadlines)
     )
 
 
-def _service_blocks(statement: Statement) -> list[_Block]:
-    if not statement.lines:
-        return []
+def _service_table(statement: Statement) -> _Table:
+    """Owed, delivered and short -- plus what was excused, when anything was.
 
-    service_rows = [
-        (
+    The subtraction has to be checkable on its face: owed minus delivered
+    minus excused is the figure in the last column, and a parent who cannot
+    see the middle term cannot verify the one that matters. The column appears
+    only in a period that has minutes to put in it, because a column of zeros
+    on every row of every month is noise in the one artifact a parent forwards
+    to a district.
+    """
+    excused = _total(statement, "excused_minutes")
+
+    def row(label: str, owed: int, delivered: int, line_excused: int, short: int) -> tuple[str, ...]:
+        cells = [label, _fmt_cell(owed), _fmt_cell(delivered)]
+        if excused:
+            cells.append(_fmt_cell(line_excused))
+        cells.append(_fmt_cell(short))
+        return tuple(cells)
+
+    rows = [
+        row(
             _cell(line.service),
-            _fmt_cell(line.owed_minutes),
-            _fmt_cell(line.delivered_minutes),
-            _fmt_cell(line.shortfall_minutes),
+            line.owed_minutes,
+            line.delivered_minutes,
+            line.excused_minutes,
+            line.shortfall_minutes,
         )
         for line in statement.lines
     ]
-    service_rows.append(
-        (
+    rows.append(
+        row(
             "TOTAL",
-            _fmt_cell(statement.total_owed),
-            _fmt_cell(statement.total_delivered),
-            _fmt_cell(statement.total_shortfall),
+            statement.total_owed,
+            statement.total_delivered,
+            excused,
+            statement.total_shortfall,
         )
     )
+
+    headers = ("Service", "Owed", "Delivered") + (("Excused",) if excused else ()) + ("Short",)
+    return _Table(headers, tuple(rows))
+
+
+def _service_blocks(statement: Statement) -> list[_Block]:
+    if not statement.lines:
+        return []
 
     confirmed = _total(statement, "school_confirmed_minutes")
     observed = _total(statement, "parent_observed_minutes")
@@ -509,7 +581,27 @@ def _service_blocks(statement: Statement) -> list[_Block]:
 
     blocks: list[_Block] = [
         _Heading("Services"),
-        _Table(("Service", "Owed", "Delivered", "Short"), tuple(service_rows)),
+        _service_table(statement),
+    ]
+    excused = _total(statement, "excused_minutes")
+    if excused:
+        blocks.append(
+            # What this paragraph may say is bounded by what the records say.
+            # "The school cannot deliver a session on a day your child is not
+            # there" is not arithmetic and comes from no record: whether an
+            # absence relieves a district of a promised session -- make-up
+            # sessions, a pattern of absences that should trigger a team
+            # review -- is an individualized question this tool does not
+            # answer, and answering it here would put a concession the family
+            # did not make into the document it forwards to the district.
+            _Para(
+                f"{_fmt_minutes(excused)} of what was promised fall on dates a record "
+                "notes your child was absent. They are shown in their own column and "
+                "are not counted as short. This is a note about attendance and nothing "
+                "else -- it says nothing about how the school delivered the rest."
+            )
+        )
+    blocks += [
         _Heading("Where the evidence comes from"),
         _Table(
             ("Service", "School-confirmed", "Parent-observed", "Undocumented"),

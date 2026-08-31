@@ -30,6 +30,8 @@ from minutes.correspondence import (
     EventDraft,
     _batches,
     _drafts_to_events,
+    attributed,
+    cache_payload,
     date_is_grounded,
     load_cached_events,
     load_correspondence,
@@ -38,6 +40,7 @@ from minutes.correspondence import (
     student_absence_events,
 )
 from minutes.models import (
+    Attribution,
     Correspondence,
     CorrespondenceKind,
     IEPLedger,
@@ -619,6 +622,145 @@ def test_a_provider_out_sick_is_not_the_child_being_absent():
     assert not reports_student_absence(provider_out)
 
 
+# Ordinary school prose in which SOMEBODY ELSE was away. Every one of these
+# carries an absence marker and a third-person word, which is why a rule
+# looking only for those two things read all of them as the child being out.
+# A staffing vacancy read as an absence is a real shortfall excused to zero by
+# one sentence, so the subject of the absence decides: in each of these, the
+# last person named before the absence is not the child.
+@pytest.mark.parametrize(
+    "body",
+    [
+        "The therapist was absent last week, so her speech sessions did not take place.",
+        "Our OT was out sick this week and could not see her.",
+        "Coverage note: the speech-language pathologist has been absent since 10/1 and "
+        "the child has received no services.",
+        "He was absent for the entire grading period; the student's speech minutes were "
+        "not delivered.",
+        "Her one-to-one aide was absent, so the resource room session was cancelled.",
+        "In the absence of a provider we could not run the group.",
+        "The substitute was absent on 10/14 so nothing ran.",
+    ],
+    ids=[
+        "therapist",
+        "ot-provider",
+        "pathologist-vacancy",
+        "unresolved-pronoun",
+        "one-to-one-aide",
+        "absence-of-a-provider",
+        "substitute",
+    ],
+)
+def test_somebody_elses_absence_is_never_the_childs(body):
+    assert not reports_student_absence(_item(body=body))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Maya was absent today so we missed OT.",
+        "10/14 - maya home sick. no OT obviously. my fault",
+        "Maya missed resource room on Tuesday and again on Wednesday this week - she was "
+        "in the nurse's office both days with a stomach ache.",
+        "I kept her home today so there was no speech.",
+        "The student was not at school today.",
+    ],
+    ids=["named", "parent-log", "pronoun-after-the-name", "kept-home", "the-student"],
+)
+def test_the_childs_own_absence_is_still_recognized(body):
+    """The rule narrowed on WHO was away, not on how anybody writes it."""
+    assert reports_student_absence(_item(body=body))
+
+
+def test_an_absence_in_one_row_of_a_service_log_stays_in_that_row():
+    """A service log is ONE item covering a semester.
+
+    Spreading one absence row across the whole document is how a stretch of
+    provider vacancy becomes an excused semester: six sessions the district
+    should answer for, struck on the strength of one day the child was out.
+    """
+    log = _item(
+        item_id="svclog-2026-11-02-01",
+        received=date(2026, 11, 2),
+        kind=CorrespondenceKind.SERVICE_LOG,
+        body="\n".join(
+            [
+                "DATE        STATUS    NOTE",
+                "2026-09-08  Not held  no provider assigned",
+                "2026-09-10  Not held  no provider assigned",
+                "2026-09-15  Not held  no provider assigned",
+                "2026-09-17  Not held  no provider assigned",
+                "2026-10-14  Not held  Maya was absent",
+                "2026-10-21  Not held  no provider assigned",
+                "2026-10-28  Not held  no provider assigned",
+            ]
+        ),
+    )
+    rows = [
+        date(2026, 9, 8),
+        date(2026, 9, 10),
+        date(2026, 9, 15),
+        date(2026, 9, 17),
+        date(2026, 10, 14),
+        date(2026, 10, 21),
+        date(2026, 10, 28),
+    ]
+    events = _events(
+        [_draft(item_id=log.item_id, event_date=day, delivered=False) for day in rows], [log]
+    )
+    stamped = attributed(events, [log])
+
+    assert len(stamped) == 7
+    assert [e.event_date for e in stamped if e.attribution is Attribution.STUDENT_ABSENCE] == [
+        date(2026, 10, 14)
+    ]
+
+
+def test_an_absence_no_sentence_dates_excuses_nothing():
+    """The document says she was out; it never says which day.
+
+    An exclusion the district cannot check against its own attendance calendar
+    is worth less than the minutes it gives up, so those minutes stay in the
+    difference — where the letter's standing request to compare the figures
+    against the district's own records is what surfaces them.
+    """
+    undated = _item(
+        item_id="email-2026-10-20-01",
+        received=date(2026, 10, 20),
+        body="Maya has been out a lot lately and was absent again recently. We missed her group on 10/13.",
+    )
+    events = _events(
+        [_draft(item_id=undated.item_id, event_date=date(2026, 10, 13), delivered=False)], [undated]
+    )
+
+    assert reports_student_absence(undated)  # the document does say it
+    assert [e.attribution for e in attributed(events, [undated])] == [
+        Attribution.SCHOOL_OR_UNRECORDED
+    ]
+
+
+def test_a_stamp_the_document_does_not_support_is_cleared_rather_than_kept():
+    """Attribution is derived on every load, so it is authoritative both ways.
+
+    An event arriving already stamped — out of a cache, or from a caller — is
+    re-derived against the document it came from. A stamp that outlives its own
+    rule is a cached grade wearing a different name.
+    """
+    ordinary = _item(
+        item_id="email-2026-11-05-01",
+        received=date(2026, 11, 5),
+        body="Parent conferences are today so specialists are covering classrooms. No speech groups ran.",
+    )
+    events = _events(
+        [_draft(item_id=ordinary.item_id, event_date=date(2026, 11, 5), delivered=False)], [ordinary]
+    )
+    presumed = [e.model_copy(update={"attribution": Attribution.STUDENT_ABSENCE}) for e in events]
+
+    assert [e.attribution for e in attributed(presumed, [ordinary])] == [
+        Attribution.SCHOOL_OR_UNRECORDED
+    ]
+
+
 def test_student_absence_events_names_the_misses_a_letter_must_qualify():
     absent = _item(
         item_id="email-2026-10-14-01",
@@ -641,6 +783,50 @@ def test_student_absence_events_names_the_misses_a_letter_must_qualify():
 
     assert [e.source for e in flagged] == ["email-2026-10-14-01"]
     assert len(events) == 2  # the fact itself is still recorded, only annotated
+
+
+def test_attribution_marks_the_absence_and_leaves_the_school_s_own_miss_alone():
+    absent = _item(
+        item_id="email-2026-10-14-01",
+        received=date(2026, 10, 14),
+        body="Maya was absent today so we missed OT.",
+    )
+    cancelled = _item(
+        item_id="email-2026-11-05-01",
+        received=date(2026, 11, 5),
+        body="Parent conferences are today so specialists are covering classrooms. No speech groups ran.",
+    )
+    events = _events(
+        [
+            _draft(item_id="email-2026-10-14-01", event_date=date(2026, 10, 14), delivered=False),
+            _draft(item_id="email-2026-11-05-01", event_date=date(2026, 11, 5), delivered=False),
+        ],
+        [absent, cancelled],
+    )
+    stamped = {e.source: e.attribution for e in attributed(events, [absent, cancelled])}
+
+    assert stamped["email-2026-10-14-01"] is Attribution.STUDENT_ABSENCE
+    assert stamped["email-2026-11-05-01"] is Attribution.SCHOOL_OR_UNRECORDED
+
+
+def test_a_delivered_session_is_never_attributed_to_an_absence():
+    """A document can report an absence and a session in the same breath — the
+    parent's log of a short week, say. Attribution answers why a session did
+    not happen, so a session that did have nothing to answer for."""
+    mixed = _item(
+        item_id="plog-2026-10-14-01",
+        received=date(2026, 10, 14),
+        kind=CorrespondenceKind.PARENT_LOG,
+        body="Maya was absent today. She did have speech on 10/13 though, 30 minutes.",
+    )
+    events = _events(
+        [_draft(item_id="plog-2026-10-14-01", event_date=date(2026, 10, 13), delivered=True)],
+        [mixed],
+    )
+    stamped = attributed(events, [mixed])
+
+    assert [e.delivered for e in stamped] == [True]
+    assert stamped[0].attribution is Attribution.SCHOOL_OR_UNRECORDED
 
 
 # ---------------------------------------------------------------------------
@@ -900,3 +1086,73 @@ class TestCachedEvents:
         assert "plog-2026-12-10-01" not in flagged
         assert "email-2026-11-05-01" not in flagged
         assert "email-2027-01-20-01" not in flagged
+
+    def test_exactly_the_three_absences_come_back_attributed(self):
+        """The three facts reconciliation must keep out of a compensatory demand.
+
+        Read off the fixture by hand: the provider's email and the parent's log
+        of the same 2026-10-14 OT session, and the January email reporting that
+        Maya was in the nurse's office. Anything else stamped here would be a
+        session excused out of a letter that the school should have to answer
+        for; any of these three missed would be a session billed to a school
+        that could not have held it.
+        """
+        stamped = {
+            (e.source, e.event_date, e.service)
+            for e in load_cached_events()
+            if e.attribution is Attribution.STUDENT_ABSENCE
+        }
+
+        assert stamped == {
+            ("email-2026-10-14-01", date(2026, 10, 14), "Occupational Therapy"),
+            ("plog-2026-10-14-01", date(2026, 10, 14), "Occupational Therapy"),
+            ("email-2027-01-15-01", date(2027, 1, 12), "Specialized Academic Instruction"),
+        }
+
+    def test_attribution_is_derived_on_load_rather_than_read_out_of_the_cache(self):
+        """The cached JSON has no attribution field, and must never need one.
+
+        A cached grade is a grade frozen on the day the classifier ran: tighten
+        the absence rule and the source improves while the shipped artifact
+        keeps claiming the same minutes. Deriving it on the way out means the
+        committed cache — written before this rule existed — is correct now.
+        """
+        raw = json.loads(CACHE.read_text(encoding="utf-8"))
+
+        assert raw
+        assert all("attribution" not in event for event in raw)
+        assert any(e.attribution is Attribution.STUDENT_ABSENCE for e in load_cached_events())
+
+    def test_the_next_classifier_run_will_not_start_caching_it_either(self):
+        """The rule has to survive the next regeneration of this fixture.
+
+        ``scripts/classify_once.py`` serializes through ``cache_payload``, and a
+        plain model dump would quietly start writing the derived field back —
+        at which point the committed artifact freezes whatever the absence rule
+        happened to be that day, and the test above only notices a fixture
+        regeneration later.
+        """
+        events = load_cached_events()
+        stamped = [e for e in events if e.attribution is Attribution.STUDENT_ABSENCE]
+
+        assert stamped  # the payload really is dropping something
+        assert all("attribution" not in row for row in cache_payload(events))
+        assert cache_payload(events) == json.loads(CACHE.read_text(encoding="utf-8"))
+
+    def test_the_cache_is_refused_without_the_correspondence_it_was_read_from(self, tmp_path, monkeypatch):
+        """Two files ship together now, so a missing one is named, not inferred.
+
+        Attribution is derived from the correspondence on every read, so the
+        cached events alone are no longer enough. A deployment that shipped one
+        without the other used to fail deep inside a function the caller never
+        called; it now says which directory is empty.
+        """
+        monkeypatch.setattr(correspondence, "CORRESPONDENCE_DIR", tmp_path)
+
+        with pytest.raises(FileNotFoundError, match="correspondence"):
+            load_cached_events()
+
+    def test_every_delivered_event_comes_back_unattributed(self):
+        for event in load_cached_events():
+            if event.delivered:
+                assert event.attribution is Attribution.SCHOOL_OR_UNRECORDED, event

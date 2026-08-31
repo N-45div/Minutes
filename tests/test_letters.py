@@ -35,6 +35,7 @@ from minutes.letters import (
 )
 from minutes.models import (
     Accommodation,
+    Attribution,
     Deadline,
     DeadlineKind,
     DeadlineState,
@@ -49,9 +50,11 @@ from minutes.models import (
     ReconciliationResult,
     RecordsRequest,
     RequestState,
+    ServiceEvent,
     ServiceObligation,
     ServiceShortfall,
 )
+from minutes.reconcile import ABSENCE_NOTE, reconcile
 
 TODAY = date(2026, 11, 2)
 
@@ -347,6 +350,75 @@ def _clean_result() -> ReconciliationResult:
     )
 
 
+def _excused_result() -> ReconciliationResult:
+    """A period holding one non-delivery the records blame on the child's absence.
+
+    Built by running the real reconciliation over synthetic events rather than
+    by hand: the letter has to find the absence footnotes that
+    :mod:`minutes.reconcile` actually writes, and a hand-typed
+    ``ServiceShortfall`` would test the letter against a fixture instead of
+    against the module that feeds it.
+
+    Hand-computed: 2026-09-08 to 2026-10-30 is 39 school days, so weekly OT
+    owes 7 sessions of 45 minutes = 315. Four were held (180) and the fifth
+    fell on 2026-10-14, which both the provider and the parent record as a day
+    Maya was out: 45 excused, leaving a difference of 90.
+    """
+    def occupational(day: date, **overrides) -> ServiceEvent:
+        base = dict(
+            event_date=day,
+            service="Occupational Therapy",
+            minutes=45,
+            delivered=True,
+            provenance=Provenance.SCHOOL_CONFIRMED,
+            source=f"svclog-{day.isoformat()}",
+        )
+        base.update(overrides)
+        return ServiceEvent(**base)
+
+    absence = dict(minutes=0, delivered=False, attribution=Attribution.STUDENT_ABSENCE)
+    events = [
+        occupational(date(2026, 9, 15)),
+        occupational(date(2026, 9, 22)),
+        occupational(date(2026, 9, 29)),
+        occupational(date(2026, 10, 6)),
+        occupational(date(2026, 10, 14), source="email-2026-10-14-01", **absence),
+        occupational(
+            date(2026, 10, 14),
+            source="plog-2026-10-14-01",
+            provenance=Provenance.PARENT_OBSERVED,
+            **absence,
+        ),
+    ]
+    return reconcile(_ledger(), events, date(2026, 9, 8), date(2026, 10, 30))
+
+
+def _fully_excused_result() -> ReconciliationResult:
+    """Two weeks in which the child was away for every session the IEP promised.
+
+    Hand-computed: 2026-09-08 to 2026-09-18 is 9 school days, so speech owes
+    3 sessions of 30 minutes (90) and OT 1 session of 45. Every one of them
+    falls on a date the district's own email records as an absence, so 135
+    minutes are excused and nothing is left short — which is not the same
+    thing as a period that reconciles, and the letters must not say it is.
+    """
+    def away(day: date, service: str) -> ServiceEvent:
+        return ServiceEvent(
+            event_date=day,
+            service=service,
+            minutes=0,
+            delivered=False,
+            provenance=Provenance.SCHOOL_CONFIRMED,
+            source=f"email-{day.isoformat()}-{service[:2].lower()}",
+            attribution=Attribution.STUDENT_ABSENCE,
+        )
+
+    speech_days = [date(2026, 9, 8), date(2026, 9, 10), date(2026, 9, 15)]
+    events = [away(day, "Speech-Language Therapy") for day in speech_days]
+    events.append(away(date(2026, 9, 8), "Occupational Therapy"))
+    return reconcile(_ledger(), events, date(2026, 9, 8), date(2026, 9, 18))
+
+
 def _records_request(**overrides) -> RecordsRequest:
     base = dict(
         request_id="req-001",
@@ -587,6 +659,268 @@ def test_undocumented_minutes_are_never_described_as_missed():
     assert "describes the state of our records rather than what took place at school" in letter.body
     for phrase in ACCUSATORY_PHRASES:
         assert phrase not in body
+
+
+def test_minutes_lost_to_a_recorded_absence_are_stated_and_left_out_of_the_difference():
+    """The sentence that keeps the rest of the letter believable.
+
+    A district that can answer one line of a compensatory request with "she
+    was not in school that day" has been handed a reason to doubt every other
+    line. So the 45 minutes come out of the difference and the letter says so,
+    with the records that put them there footnoted beside it.
+    """
+    letter = compile_compensatory_request(_ledger(), _excused_result(), [], today=TODAY)
+
+    assert (
+        "45 minutes are excluded from the difference below as minutes owed on a date noted as "
+        "an absence, rather than asked of the district." in letter.body
+    )
+    assert (
+        "For this period: 315 minutes owed, 180 minutes documented as delivered, 45 minutes "
+        "excluded as falling on a noted absence, a difference of 90 minutes." in letter.body
+    )
+    assert validate_letter(letter) == []
+
+
+def test_the_absence_sentences_are_footnoted_to_the_records_that_note_the_absence():
+    letter = compile_compensatory_request(_ledger(), _excused_result(), [], today=TODAY)
+
+    absence_claims = [c for c in letter.citations if "absent on 2026-10-14" in c.claim]
+    assert len(absence_claims) == 2  # the district's record and the parent's, stated apart
+    for citation in absence_claims:
+        assert citation.marker in letter.body
+        assert "absent" in citation.evidence.detail
+
+
+def test_the_absence_sentence_names_the_date_instead_of_a_bare_plural():
+    """One record, one date. "absent on dates in this period", said twice about
+    the same day, lets a district infer more absences than the records hold —
+    and the dates are in the footnotes already, so naming them costs nothing
+    and is unarguable."""
+    letter = compile_compensatory_request(_ledger(), _excused_result(), [], today=TODAY)
+
+    assert "District records note Maya R. as absent on 2026-10-14." in letter.body
+    assert "absent on dates in this period" not in letter.body
+    assert "a date noted as an absence" in letter.body  # singular, because there is one
+
+
+def test_no_sentence_in_a_letter_claims_a_session_was_scheduled():
+    """The ledger holds no schedule, so no footnote can support one.
+
+    "absent on dates when Occupational Therapy was scheduled" reads as though
+    the records establish that a session was due that day. Nothing in the
+    ledger or the evidence does, which makes it exactly the unsourced claim
+    this module exists to make impossible — and validate_letter cannot catch
+    it, because the sentence is properly footnoted to a real record that
+    simply does not say that.
+    """
+    for compiled in (
+        compile_compensatory_request(_ledger(), _excused_result(), [], today=TODAY),
+        compile_shortfall_notice(_ledger(), _excused_result(), today=TODAY),
+    ):
+        assert "scheduled" not in compiled.body
+        for citation in compiled.citations:
+            if ABSENCE_NOTE in citation.evidence.detail:
+                assert "scheduled" not in citation.claim
+
+
+def test_an_absence_record_is_never_cited_as_proof_of_a_delivery():
+    """A record saying the session did not happen cannot source the delivered
+    figure. It is the record the letter has just used to give minutes up."""
+    letter = compile_compensatory_request(_ledger(), _excused_result(), [], today=TODAY)
+
+    delivered_claims = [
+        c for c in letter.citations if "of those minutes as delivered" in c.claim
+    ]
+    assert delivered_claims
+    for citation in delivered_claims:
+        assert ABSENCE_NOTE not in citation.evidence.detail
+        assert "recorded as not delivered" not in citation.evidence.detail
+        assert "recorded as delivered" in citation.evidence.detail
+
+
+def test_the_parents_own_note_of_an_absence_stays_the_parents():
+    """Parent-observed evidence is attributed wherever it appears, including
+    where it is being used against the family's own claim."""
+    letter = compile_compensatory_request(_ledger(), _excused_result(), [], today=TODAY)
+
+    assert "We recorded at home that Maya R. was absent" in letter.body
+    parent_absence = [
+        c
+        for c in letter.citations
+        if c.evidence.provenance is Provenance.PARENT_OBSERVED
+        and "absent on 2026-10-14" in c.claim
+    ]
+    assert parent_absence
+    for citation in parent_absence:
+        assert any(phrase in citation.claim.lower() for phrase in PARENT_ATTRIBUTION_PHRASES)
+
+
+def test_the_claimed_total_names_every_term_it_was_computed_from():
+    """765 minus 180 is not 540 unless the 45 excused minutes are named too.
+
+    A district that checks the summary figure against the per-service
+    paragraphs above it must not find a 45-minute discrepancy: that is the
+    "handed a reason to doubt every other line" failure, arriving through the
+    one sentence a reader checks first.
+    """
+    letter = compile_compensatory_request(_ledger(), _excused_result(), [], today=TODAY)
+
+    assert (
+        "Across the services above, the IEP provides 765 minutes for this period, 180 minutes "
+        "are documented as delivered, and 45 minutes fall on dates a record notes Maya R. was "
+        "absent and are excluded, leaving an arithmetic difference of 540 minutes." in letter.body
+    )
+    assert "585 minutes" not in letter.body
+    assert validate_letter(letter) == []
+
+
+def test_the_shortfall_notice_summary_names_every_term_too():
+    notice = compile_shortfall_notice(_ledger(), _excused_result(), today=TODAY)
+
+    assert (
+        "Across the services above, the IEP provides 765 minutes for this period, 180 minutes "
+        "are documented as delivered, and 45 minutes fall on dates a record notes Maya R. was "
+        "absent and are excluded, leaving a difference of 540 minutes for this period."
+        in notice.body
+    )
+    assert validate_letter(notice) == []
+
+
+def test_an_absence_record_is_never_what_makes_a_gap_escalate():
+    """The lever on a compensatory demand may not be the child's absence.
+
+    The same district record, read two ways. Unattributed it documents part of
+    the gap and the ask is legitimate. Attributed to Maya's own absence,
+    reconciliation takes those minutes OUT of the difference — and what is
+    left is 420 minutes nobody recorded either way. Counting the absence
+    record as the evidence for that remainder would ask a district to convene
+    a team over minutes the family holds no record of, on the strength of a
+    record it has just used to give minutes up.
+    """
+    def speech(attribution: Attribution) -> ReconciliationResult:
+        event = ServiceEvent(
+            event_date=date(2026, 9, 24),
+            service="Speech-Language Therapy",
+            minutes=0,
+            delivered=False,
+            provenance=Provenance.SCHOOL_CONFIRMED,
+            source="email-2026-09-24-01",
+            attribution=attribution,
+        )
+        return reconcile(_ledger(), [event], date(2026, 9, 8), date(2026, 10, 30))
+
+    unattributed = speech(Attribution.SCHOOL_OR_UNRECORDED)
+    line = unattributed.shortfalls[0]
+    assert (line.shortfall_minutes, line.undocumented_minutes) == (450, 420)
+    asked = compile_compensatory_request(_ledger(), unattributed, [], today=TODAY)
+    assert "Request for an IEP team meeting to consider compensatory services" in asked.subject
+
+    excused = speech(Attribution.STUDENT_ABSENCE)
+    line = excused.shortfalls[0]
+    assert (line.excused_minutes, line.shortfall_minutes, line.undocumented_minutes) == (30, 420, 420)
+    not_asked = compile_compensatory_request(_ledger(), excused, [], today=TODAY)
+    assert "no compensatory services requested" in not_asked.subject
+    assert "I am not requesting compensatory services on the strength of it" in not_asked.body
+    assert "Please offer meeting dates" not in not_asked.body
+    assert validate_letter(not_asked) == []
+
+
+def test_a_period_excused_to_zero_never_says_the_records_reconcile():
+    """Nothing was delivered. The letters may not report that as agreement.
+
+    "The records we hold reconcile with the minutes the IEP provides" and "I am
+    not raising a concern about delivery for this period" are both false of a
+    period in which none of the promise was delivered, and both are a written
+    concession sitting in the district's file. The three figures are stated
+    instead.
+    """
+    result = _fully_excused_result()
+    assert sum(line.shortfall_minutes for line in result.shortfalls) == 0
+    assert sum(line.excused_minutes for line in result.shortfalls) == 135
+
+    notice = compile_shortfall_notice(_ledger(), result, today=TODAY)
+    comp = compile_compensatory_request(_ledger(), result, [], today=TODAY)
+
+    for compiled in (notice, comp):
+        assert "reconcile with the minutes the IEP provides" not in compiled.body
+        assert "I am not raising a concern about delivery" not in compiled.body
+        assert (
+            "the IEP provides 135 minutes for this period, 0 minutes are documented as "
+            "delivered, and 135 minutes fall on dates a record notes Maya R. was absent and "
+            "are excluded" in compiled.body
+        )
+        assert validate_letter(compiled) == []
+
+    assert "I am not requesting compensatory services" in comp.body
+    assert "no compensatory services requested" in comp.subject
+
+
+def test_the_exclusion_claim_disappears_with_the_records_under_it():
+    """The one claim in this module that is about the CHILD.
+
+    A line can carry excused minutes whose absence records are not on it —
+    ``ServiceShortfall`` is a frozen contract other code fills in. The two
+    cited sentences drop out on their own, and the exclusion sentence has to
+    go with them: it carries no marker, so validate_letter would never see it
+    standing in the body as an unfootnoted statement that a child was away.
+    """
+    orphaned = _result(
+        shortfalls=[
+            _shortfall(
+                owed_minutes=480,
+                delivered_minutes=240,
+                excused_minutes=120,
+                shortfall_minutes=120,
+                school_confirmed_minutes=240,
+                parent_observed_minutes=0,
+                undocumented_minutes=120,
+                evidence=[_silence_ref()],  # no absence record anywhere on the line
+            )
+        ]
+    )
+    draft = _Draft()
+    _reconciliation_blocks(draft, _ledger(), orphaned)
+
+    assert "absent" not in draft.body()
+    assert not [line for line in draft.derived_lines if "noted as an absence" in line]
+    assert not [c for c in draft.citations if "absent" in c.claim]
+
+    letter = compile_shortfall_notice(_ledger(), orphaned, today=TODAY)
+    assert "excluded from the difference below" not in letter.body
+    assert validate_letter(letter) == []
+
+
+def test_the_shortfall_notice_states_the_exclusion_too():
+    """Both letters that carry a reconciliation carry the same subtraction."""
+    notice = compile_shortfall_notice(_ledger(), _excused_result(), today=TODAY)
+
+    assert "45 minutes excluded as falling on a noted absence" in notice.body
+    assert validate_letter(notice) == []
+
+
+def test_the_exclusion_is_the_parents_own_arithmetic_and_carries_no_marker():
+    """The claim about the district is the absence record, and it is cited.
+    The exclusion itself is the parent's own count over that record, so it is
+    recorded on the draft rather than footnoted — the same treatment the owed
+    and undocumented counts get."""
+    draft = _Draft()
+    _reconciliation_blocks(draft, _ledger(), _excused_result())
+
+    # Three unmarked sentences on the speech line, four on the OT line: the
+    # extra one is the exclusion.
+    assert len(draft.derived_lines) == 7
+    exclusion = [line for line in draft.derived_lines if "noted as an absence" in line]
+    assert len(exclusion) == 1
+    assert "[" not in exclusion[0]
+    assert exclusion[0] in draft.body()
+
+
+def test_a_period_with_no_recorded_absence_says_nothing_about_absence():
+    """The sentence appears where it is true and nowhere else."""
+    for letter in _all_letters():
+        assert "noted as an absence" not in letter.body
+        assert "was absent" not in letter.body
 
 
 def test_no_compiled_letter_uses_accusatory_vocabulary():

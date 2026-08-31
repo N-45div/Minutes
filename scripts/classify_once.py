@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from minutes.correspondence import (  # noqa: E402
     EventDraft,
+    cache_payload,
     classify_to_events,
     load_cached_events,
     load_correspondence,
@@ -84,10 +85,10 @@ def main() -> None:
     cache = FIXTURES / "cache"
     cache.mkdir(exist_ok=True)
     out = cache / f"{name}_events.json"
-    out.write_text(
-        json.dumps([e.model_dump(mode="json") for e in events], indent=2),
-        encoding="utf-8",
-    )
+    # cache_payload drops the derived fields: attribution is recomputed from
+    # the correspondence on every read, and a cached derived fact would freeze
+    # the absence rule as it stood on the day this ran.
+    out.write_text(json.dumps(cache_payload(events), indent=2), encoding="utf-8")
 
     print(f"cached -> {out}")
     print(f"items classified: {len(items)} | events: {len(events)}")
@@ -106,14 +107,15 @@ def main() -> None:
             f"{sum(e.minutes for e in delivered)} minutes documented"
         )
 
-    # The handoff reconciliation and the letter compiler have to act on: these
-    # misses are the child's absence, not the school's failure, and nothing in
-    # ServiceEvent says so.
+    # Printed so the excused facts are visible before anything is compiled from
+    # them: these misses are the child's absence, not the school's failure.
+    # Reconciliation reads the same rule off each event's Attribution, which is
+    # derived from the correspondence on every load rather than cached here.
     excusable = student_absence_events(events, items)
     print(f"\nnon-deliveries attributed to student absence: {len(excusable)}")
     for event in excusable:
         print(f"  - {event.event_date} {event.service} ({event.source}, {event.provenance.value})")
-    print("  ^ letters must qualify or exclude these; ServiceEvent carries no fault field.")
+    print("  ^ reconciliation excludes these minutes from the shortfall rather than asking for them back.")
 
 
 if __name__ == "__main__":

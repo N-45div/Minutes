@@ -51,15 +51,18 @@ fact — whether the session happened and how long it ran — are decided by the
 same majority, because a rule that lets a lone bad reading lose on delivery
 but win on duration is a rule biased toward finding a shortfall.
 
-HANDOFF — EXCUSABLE NON-DELIVERY. A ``ServiceEvent`` records that a session
-did not happen; it carries no field for *why*, and this module does not
-invent one. But some non-deliveries are the child's absence, not the school's
-failure, and ``models.Provenance`` says a ``SCHOOL_CONFIRMED`` fact may be
-cited in an escalation letter without qualification — so a compensatory
+EXCUSABLE NON-DELIVERY. Some non-deliveries are the child's absence, not the
+school's failure, and ``models.Provenance`` says a ``SCHOOL_CONFIRMED`` fact
+may be cited in an escalation letter without qualification — so a compensatory
 demand could otherwise be built on a session the school could not have
-delivered. ``student_absence_events`` names that subset explicitly.
-Reconciliation and the letter compiler must call it and qualify or exclude
-those events; in the shipped fixture it returns three (2026-10-14 OT, from
+delivered. Every non-delivery therefore leaves this module carrying an
+``Attribution``, derived from its own source document exactly as provenance
+is. The rule is deliberately narrow in both directions, because it moves
+minutes out of what a family asks for: a single sentence must both say that
+the CHILD was away — not the therapist, not the writer — and name the DAY the
+missed session fell on. A staffing absence and a semester-long service log
+with one absence row are the two ways a wide rule would quietly excuse a real
+shortfall. In the shipped fixture three facts carry it (2026-10-14 OT, from
 both the provider's email and the parent's log, and 2027-01-12 Specialized
 Academic Instruction).
 
@@ -83,6 +86,7 @@ from strands.models import BedrockModel
 
 from .config import BEDROCK_REGION, CLASSIFIER_MODEL
 from .models import (
+    Attribution,
     Correspondence,
     CorrespondenceKind,
     IEPLedger,
@@ -244,11 +248,57 @@ def load_correspondence(name: str = "maya_fall_2026") -> list[Correspondence]:
 
 
 def load_cached_events(name: str = "maya_fall_2026") -> list[ServiceEvent]:
-    """Read the events cached by ``scripts/classify_once.py``. No LLM call."""
+    """Read the events cached by ``scripts/classify_once.py``. No LLM call.
+
+    Reads TWO things, and both must ship together: the cached events under
+    ``fixtures/cache/``, and the correspondence under
+    ``fixtures/correspondence/`` that they were read out of.
+
+    Attribution is recomputed from that correspondence on the way out rather
+    than read from the cache, for the same reason provenance is never asked of
+    the model: it is a fact about the document, decided by a deterministic rule
+    over the document's own words. Caching it would freeze the rule as it stood
+    on the day the classifier ran, so a tightened absence rule would reach the
+    source and not the shipped artifact, and a cache written before the rule
+    existed would silently claim minutes the school could not have delivered.
+    Deriving it here costs a file read and keeps every cached JSON — including
+    the committed one, which has no such field — correct by construction.
+
+    Raises:
+        FileNotFoundError: if either half is missing. A deployment that ships
+            the cache without the correspondence is refused by name rather than
+            served events whose attribution could not be derived.
+    """
     path = CACHE_DIR / f"{name}_events.json"
     if not path.exists():
         raise FileNotFoundError(f"{path} missing; run scripts/classify_once.py {name}")
-    return [ServiceEvent.model_validate(raw) for raw in json.loads(path.read_text(encoding="utf-8"))]
+    events = [ServiceEvent.model_validate(raw) for raw in json.loads(path.read_text(encoding="utf-8"))]
+    try:
+        items = load_correspondence(name)
+    except FileNotFoundError as missing:
+        raise FileNotFoundError(
+            f"{path.name} was read, but attribution is derived from the correspondence itself and "
+            f"no {name}_*.json items were found in {CORRESPONDENCE_DIR}; the cache and the "
+            "correspondence fixtures ship together"
+        ) from missing
+    return attributed(events, items)
+
+
+DERIVED_FIELDS = frozenset({"attribution"})
+"""Fields recomputed on every read, and therefore never written to the cache.
+
+The cache holds what the classifier read. Attribution is what a deterministic
+rule makes of it, and freezing that alongside the readings would put the rule
+of the day the classifier ran into a committed artifact: tighten the absence
+rule afterwards and the source improves while the shipped cache goes on
+excusing the same minutes. So the writer drops it and
+:func:`load_cached_events` derives it back.
+"""
+
+
+def cache_payload(events: list[ServiceEvent]) -> list[dict]:
+    """The JSON ``scripts/classify_once.py`` writes for a classified semester."""
+    return [event.model_dump(mode="json", exclude=set(DERIVED_FIELDS)) for event in events]
 
 
 def classify_to_events(items: list[Correspondence], ledger: IEPLedger) -> list[ServiceEvent]:
@@ -266,6 +316,10 @@ def classify_to_events(items: list[Correspondence], ledger: IEPLedger) -> list[S
     readings before a fact is established at all. That is the difference
     between three passes actually protecting against a lone bad reading and
     merely appearing to.
+
+    Every non-delivery comes back carrying its :class:`~minutes.models.Attribution`:
+    a miss whose own document reports the child was away is not a miss the
+    school can be asked to make up.
     """
     model = BedrockModel(model_id=CLASSIFIER_MODEL, region_name=BEDROCK_REGION, max_tokens=4096)
     batches = list(_batches(items))
@@ -278,7 +332,7 @@ def classify_to_events(items: list[Correspondence], ledger: IEPLedger) -> list[S
             agent = Agent(model=model, system_prompt=SYSTEM_PROMPT, callback_handler=None)
             drafts.extend(agent.structured_output(ClassificationBatch, _batch_prompt(batch, ledger)).events)
 
-    return _drafts_to_events(drafts, items, ledger, min_readings=VOTE_QUORUM)
+    return attributed(_drafts_to_events(drafts, items, ledger, min_readings=VOTE_QUORUM), items)
 
 
 def _batches(items: list[Correspondence]) -> Iterator[list[Correspondence]]:
@@ -562,35 +616,179 @@ def _delivered_minutes(group: list[EventDraft], item: Correspondence, obligation
 
 # ---------------------------------------------------------------------------
 # Excusable non-delivery: carried forward, never silently folded in.
+#
+# Two questions decide whether a miss is excused, and each one is expensive to
+# get wrong in its own direction.
+#
+# WHO was away. "The therapist was absent last week" and "Maya was absent last
+# week" are the same sentence shape and opposite facts. Reading the first as
+# the second excuses a staffing vacancy — the largest and most answerable kind
+# of shortfall there is — out of a letter on one sentence of ordinary school
+# prose. So the absence has to attach to the child, and the party it attaches
+# to is resolved from the sentence rather than assumed: the last person NAMED
+# before the absence marker is its subject. Pronouns are transparent, because
+# "she" is whoever was last named — in "Her aide was absent" that is the aide.
+#
+# WHICH DAY. A service log is one document covering a semester and a progress
+# report is one document covering a term. An absence written in one row of a
+# log says nothing about the other forty rows, so the excuse is bound to the
+# date its own sentence names, exactly as a delivery fact is (see
+# :func:`date_is_grounded`). An absence no sentence dates excuses nothing:
+# these minutes are struck from what the family asks for, and a subtraction
+# the district cannot check against its own attendance calendar is worth less
+# than the minutes it gives up. Those minutes stay in the difference, where
+# the letter's standing request — compare this against your own records — is
+# what surfaces them.
 # ---------------------------------------------------------------------------
 
-_STUDENT_ABSENCE = re.compile(
+# Markers whose absent party is the SUBJECT of the sentence.
+#
+# "absence" is deliberately not among them: "in the absence of a provider" is a
+# staffing sentence, and \babsent\b does not match it.
+_ABSENCE_PREDICATE = re.compile(
     r"\babsent\b|\bhome\s+sick\b|\bout\s+sick\b|\bstayed\s+home\b"
-    r"|\bnurse'?s?\s+office\b|\bkept\s+(?:her|him)\s+home\b"
-    r"|\bnot\s+(?:at|in)\s+school\b",
+    r"|\bnurse'?s?\s+office\b|\bnot\s+(?:at|in)\s+school\b|\bout\s+of\s+school\b",
     re.IGNORECASE,
 )
-_THIRD_PERSON = re.compile(r"\b(?:she|her|he|him|maya|the\s+(?:student|child))\b", re.IGNORECASE)
-_FIRST_PERSON_SUBJECT = re.compile(r"\bi\s*(?:'m|am|was|'ve|have)\b", re.IGNORECASE)
+
+# Markers that name the absent party as their own OBJECT. The subject of "I
+# kept her home" is the parent, so for these the test is on the object — and
+# keeping somebody home is something done to a child, not to a provider.
+_KEPT_HOME = re.compile(
+    r"\bkept\s+(?:her|him|them|maya|the\s+(?:student|child)|my\s+(?:child|daughter|son))"
+    r"\s+(?:home|out)\b",
+    re.IGNORECASE,
+)
+
+# Words that name the child. The alias is the fixture's; the generic forms are
+# what a district writes when it is being careful.
+_CHILD_SUBJECT = re.compile(
+    r"\b(?:maya|the\s+student|the\s+child|my\s+(?:child|daughter|son)|your\s+child"
+    r"|student|child|daughter|son)\b",
+    re.IGNORECASE,
+)
+
+# Everybody else who turns up as the subject of an absence in school
+# correspondence: the writer, and the staff whose own absence is a staffing
+# problem rather than an attendance one.
+_OTHER_SUBJECT = re.compile(
+    r"\b(?:i|we|therapists?|slps?|pathologists?|ots?|pts?|providers?|aides?|paras?"
+    r"|paraprofessionals?|counsell?ors?|psychologists?|teachers?|nurses?|subs?"
+    r"|substitutes?|staff|specialists?|instructors?|clinicians?|interpreters?"
+    r"|assistants?|principals?|secretary|position|coverage|vacancy|school|schools"
+    r"|district|office|offices)\b",
+    re.IGNORECASE,
+)
+
+# One pattern so the two classes are found in a single left-to-right scan and
+# "last one named" means what it says.
+_NAMED_SUBJECT = re.compile(
+    f"{_CHILD_SUBJECT.pattern}|{_OTHER_SUBJECT.pattern}", re.IGNORECASE
+)
+
+
+def _absence_is_the_child(sentence: str) -> bool:
+    """Does this sentence say the CHILD was away, rather than somebody else?
+
+    The subject of an absence marker is approximated by the last person named
+    before it. That approximation is what separates "Maya was absent" from
+    "Her one-to-one aide was absent": both carry a third-person word and an
+    absence marker, and only the second one has a provider standing between
+    the pronoun and the predicate.
+
+    A sentence whose only subject is an unresolved pronoun — "He was absent
+    for the entire grading period" — names nobody, and names nobody on
+    purpose: this module will not guess whose absence it is reading.
+    """
+    if _KEPT_HOME.search(sentence):
+        return True
+    for marker in _ABSENCE_PREDICATE.finditer(sentence):
+        named = _NAMED_SUBJECT.findall(sentence[: marker.start()])
+        if named and _CHILD_SUBJECT.fullmatch(named[-1].strip()):
+            return True
+    return False
+
+
+def _absence_sentences(item: Correspondence) -> Iterator[str]:
+    for line in _lines(item):
+        for sentence in _SENTENCE_SPLIT.split(line):
+            if _absence_is_the_child(sentence):
+                yield sentence
 
 
 def reports_student_absence(item: Correspondence) -> bool:
-    """Does this item attribute a non-delivery to the child being away?
+    """Does this item report the child as away anywhere in its text?
 
-    "Maya was absent today so we missed OT" and "I am out sick today so there
-    is no OT" are the same sentence shape and opposite facts, so the test is
-    per sentence and turns on who is missing: a third-person subject with an
-    absence marker, and no first-person one.
+    A whole-item question, and so the weaker of the two: it says a document
+    mentions an absence, not that any particular session was excused by one.
+    :func:`reports_student_absence_on` is what the arithmetic runs on.
     """
-    for line in _lines(item):
-        for sentence in _SENTENCE_SPLIT.split(line):
-            if not _STUDENT_ABSENCE.search(sentence):
-                continue
-            if _FIRST_PERSON_SUBJECT.search(sentence):
-                continue
-            if _THIRD_PERSON.search(sentence):
-                return True
-    return False
+    return any(True for _ in _absence_sentences(item))
+
+
+def reports_student_absence_on(item: Correspondence, day: date) -> bool:
+    """Does this item report the child as away on ``day`` specifically?
+
+    One sentence has to carry both halves: that the child was away, and which
+    day it was. A service log is a single ``Correspondence`` item spanning a
+    semester, so an absence in one row must not reach the forty rows around
+    it — that is how one true absence would otherwise excuse a staffing
+    vacancy that ran for months.
+
+    Dates are read exactly as they are for delivery facts: "today" resolves
+    against the item's own received date, "10/14" and "October 14" are read
+    literally, and a weekday name resolves only when it resolves to one day
+    (see :func:`_sentence_names_day`).
+    """
+    return any(_sentence_names_day(sentence, item, day) for sentence in _absence_sentences(item))
+
+
+def attributed(
+    events: list[ServiceEvent],
+    items: list[Correspondence],
+) -> list[ServiceEvent]:
+    """Stamp every non-delivery with what its own source document says caused it.
+
+    Attribution is derived from the item, never generated and never cached —
+    the same rule provenance follows, and for the same reason. A classifier
+    reading a document can report what the document says; whether "Maya was
+    absent today" excuses the session is a rule about documents, and a rule is
+    cheaper to run than to trust. Running it on the way out means the rule can
+    be tightened without re-reading a semester, and means a cache written
+    before the rule existed cannot carry minutes into a letter that the school
+    could not have delivered.
+
+    The stamp is decided per event, not per document: an event is excused only
+    where a sentence in its own source both reports the child away and names
+    that event's date.
+
+    This is authoritative in both directions. An event arriving already
+    stamped, from a cache or a caller, is re-derived and reset to the default
+    where the document does not support it, because a derived fact that
+    survives its own rule is a cached fact wearing a different name.
+
+    Deliveries are left alone: attribution answers why a session did not
+    happen, and there is nothing to answer for a session that did.
+    """
+    by_id = {item.item_id: item for item in items}
+
+    stamped: list[ServiceEvent] = []
+    for event in events:
+        item = by_id.get(event.source)
+        excused = (
+            not event.delivered
+            and item is not None
+            and reports_student_absence_on(item, event.event_date)
+        )
+        attribution = (
+            Attribution.STUDENT_ABSENCE if excused else Attribution.SCHOOL_OR_UNRECORDED
+        )
+        stamped.append(
+            event
+            if event.attribution is attribution
+            else event.model_copy(update={"attribution": attribution})
+        )
+    return stamped
 
 
 def student_absence_events(
@@ -599,16 +797,16 @@ def student_absence_events(
 ) -> list[ServiceEvent]:
     """The non-deliveries the child's own absence caused.
 
-    ``ServiceEvent`` is frozen and has no field for fault, and this module does
-    not judge fault — but it does know which documents blame the child's
-    absence, and refusing to pass that on is not neutrality. Provenance says a
-    SCHOOL_CONFIRMED fact may be cited without qualification, so without this
-    list a compensatory demand can be built on a session the school could not
-    have delivered. Reconciliation and the letter compiler must qualify or
-    exclude everything this returns.
+    The same subset :func:`attributed` stamps, returned as a list for callers
+    that want to look at them — ``scripts/classify_once.py`` prints it after a
+    run so the excused facts are visible before anything is compiled from them.
+    Reconciliation reads the stamp on the event instead.
     """
-    absence_sources = {item.item_id for item in items if reports_student_absence(item)}
-    return [event for event in events if not event.delivered and event.source in absence_sources]
+    return [
+        event
+        for event in attributed(events, items)
+        if event.attribution is Attribution.STUDENT_ABSENCE
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -658,6 +856,10 @@ def _drafts_to_events(
     that have already been established — ``scripts/classify_once.py --regroom``,
     and the unit tests — re-applies the deterministic guards without re-running
     an election it has no ballots for.
+
+    Attribution is not decided here. It is stamped by :func:`attributed` at
+    this module's two public exits, so the cached path and the live path apply
+    one rule rather than two.
     """
     by_id = {item.item_id: item for item in items}
     by_service = {o.service.casefold(): o for o in ledger.obligations}
