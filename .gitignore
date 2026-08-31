@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+*.local.md
+.aws/
+credentials*
+node_modules/
+dist/
+.DS_Store
