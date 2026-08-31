@@ -16,6 +16,16 @@ Minutes is **not** a chatbot, and it does **not** give legal advice. It compiles
 
 Early scaffold — architecture and build in progress.
 
+## Cost discipline
+
+Built to run cheap and demo cheap:
+
+- **Dev loop on Claude Haiku 4.5** (`global.anthropic.claude-haiku-4-5`), **demo/final on Claude Sonnet 4.6** — the model id is a config value (`MINUTES_MODEL`), never hardcoded.
+- `global.` inference profiles only (cheaper than geo/regional endpoints).
+- Hard `maxTokens` caps and turn limits on every agent invocation; prompt caching on the stable system/ledger prefix.
+- Serverless everywhere (AgentCore Runtime, EventBridge cadence) — nothing idles, nothing bills while waiting.
+- AWS Budget alarm on the account (alerts at 40% and 80% of monthly cap) so a runaway loop can never burn quietly.
+
 ## License
 
 MIT
