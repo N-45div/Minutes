@@ -18,4 +18,4 @@ Early scaffold — architecture and build in progress.
 
 ## License
 
-Apache-2.0
+MIT
