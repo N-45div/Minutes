@@ -18,13 +18,14 @@ Early scaffold — architecture and build in progress.
 
 ## Cost discipline
 
-Built to run cheap and demo cheap:
+Built to run cheap and demo cheap — **target: under $10 total**. The core engine (ledger, reconciliation, deadline clocks, letter assembly) is deterministic code by design, so the LLM is invoked only where language actually lives: IEP extraction, school-email parsing, letter prose, decision-card summaries.
 
-- **Dev loop on Claude Haiku 4.5** (`global.anthropic.claude-haiku-4-5`), **demo/final on Claude Sonnet 4.6** — the model id is a config value (`MINUTES_MODEL`), never hardcoded.
+- **LLM outputs are fixture-cached during development** — extraction runs once, everything downstream iterates against saved JSON at zero token cost; tests replay recorded responses, never live calls.
+- **Dev loop on Claude Haiku 4.5** (`global.anthropic.claude-haiku-4-5`), email classification on Nova Lite, **demo/final takes only on Claude Sonnet 4.6** — the model id is a config value (`MINUTES_MODEL`), never hardcoded.
 - `global.` inference profiles only (cheaper than geo/regional endpoints).
 - Hard `maxTokens` caps and turn limits on every agent invocation; prompt caching on the stable system/ledger prefix.
 - Serverless everywhere (AgentCore Runtime, EventBridge cadence) — nothing idles, nothing bills while waiting.
-- AWS Budget alarm on the account (alerts at 40% and 80% of monthly cap) so a runaway loop can never burn quietly.
+- AWS Budget alarm on the account ($10 monthly cap, alerts at $4 and $8) so a runaway loop can never burn quietly.
 
 ## License
 
