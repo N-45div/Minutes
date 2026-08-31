@@ -1,0 +1,152 @@
+{
+  "_synthetic": "SYNTHETIC DEMONSTRATION DATA. Every person, school, district, provider and message in this file is fictional and was written for this repository. No real child, family, school, district or employee is described. Nothing here is a record of anything that happened.",
+  "fixture": "maya_fall_2026",
+  "student_alias": "Maya R.",
+  "description": "The parent's running quick-log, one entry per note. Written the way a parent actually keeps one: fragmentary, lowercase, inconsistent date formats, sourced from asking an eight-year-old what happened, and therefore hedged. It contains one self-correction, because a log that never corrects itself is not a real log. For most of the December-January speech vacancy this is the only dated record that any session was missed - which is exactly why parent_observed is a distinct evidence grade rather than a footnote.",
+  "items": [
+    {
+      "item_id": "plog-2026-09-14-01",
+      "received": "2026-09-14",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "no speech yet. asked maya again today and she says she hasn't met the speech teacher. school started a week ago"
+    },
+    {
+      "item_id": "plog-2026-09-17-01",
+      "received": "2026-09-17",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "9/17 - still nothing. emailed ms renner"
+    },
+    {
+      "item_id": "plog-2026-09-22-01",
+      "received": "2026-09-22",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "she says she went to speech today!! finally. 'we played a game with cards'"
+    },
+    {
+      "item_id": "plog-2026-10-06-01",
+      "received": "2026-10-06",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "10/6 she says no speech today"
+    },
+    {
+      "item_id": "plog-2026-10-08-01",
+      "received": "2026-10-08",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "correction - asked her again and she DID have speech on tuesday 10/6, she just forgot. so tuesday was fine. I need to stop asking her at bedtime"
+    },
+    {
+      "item_id": "plog-2026-10-13-01",
+      "received": "2026-10-13",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "10/13 she says she didn't go to mr bell's room today, there was a sub in her class"
+    },
+    {
+      "item_id": "plog-2026-10-14-01",
+      "received": "2026-10-14",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "10/14 - maya home sick. no OT obviously. my fault"
+    },
+    {
+      "item_id": "plog-2026-10-20-01",
+      "received": "2026-10-20",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "asked her about speech, she doesn't remember. second time this month I can't tell either way"
+    },
+    {
+      "item_id": "plog-2026-10-27-01",
+      "received": "2026-10-27",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "10/27 no speech. she says ms R wasn't there"
+    },
+    {
+      "item_id": "plog-2026-11-03-01",
+      "received": "2026-11-03",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "speech happened today. she remembered the /s/ cards, so I believe her"
+    },
+    {
+      "item_id": "plog-2026-11-12-01",
+      "received": "2026-11-12",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "11/12 she says speech was 'only for a little bit' today"
+    },
+    {
+      "item_id": "plog-2026-11-17-01",
+      "received": "2026-11-17",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "no speech today. she says the speech room was locked. nobody emailed me about it"
+    },
+    {
+      "item_id": "plog-2026-12-10-01",
+      "received": "2026-12-10",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "12/8 no speech and 12/10 no speech. she says there's no speech teacher now. the letter said 'temporarily'"
+    },
+    {
+      "item_id": "plog-2026-12-17-01",
+      "received": "2026-12-17",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "12/15 nothing. 12/17 nothing. that's two full weeks with no speech at all and nobody has contacted us"
+    },
+    {
+      "item_id": "plog-2027-01-08-01",
+      "received": "2027-01-08",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "1/5 and 1/7 both no speech. district sent me a log today and the speech rows just STOP on 12/3. nothing after that, not even a blank line"
+    },
+    {
+      "item_id": "plog-2027-01-14-01",
+      "received": "2027-01-14",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "snow day today, school closed. also tuesday 1/12 - no speech again"
+    },
+    {
+      "item_id": "plog-2027-01-21-01",
+      "received": "2027-01-21",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "1/19 no speech. 1/21 no speech. AGAIN. that is six weeks. calling the office tomorrow"
+    },
+    {
+      "item_id": "plog-2027-01-26-01",
+      "received": "2027-01-26",
+      "kind": "parent_log",
+      "sender": "Ms. D. Reyes (parent)",
+      "subject": "quick log",
+      "body": "new speech teacher today?? nobody told us. maya says 'a man came and got me'"
+    }
+  ]
+}

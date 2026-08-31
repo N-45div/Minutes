@@ -109,3 +109,191 @@ class IEPLedger(BaseModel):
     @property
     def promised_minutes_per_week(self) -> float:
         return sum(o.minutes_per_week for o in self.obligations)
+
+
+# ---------------------------------------------------------------------------
+# Evidence, correspondence, and the artifacts compiled from them.
+#
+# Everything below is the frozen contract between engine modules. Each module
+# consumes and returns these types and nothing else, so no module needs to
+# know how any other module is implemented.
+# ---------------------------------------------------------------------------
+
+
+class EvidenceRef(BaseModel):
+    """A pointer to why a claim is believed. No compiled document may assert
+    a fact that lacks one of these."""
+
+    provenance: Provenance
+    source: str = Field(description="Identifier of the originating record, e.g. 'email-2026-10-14-01', 'req-002'")
+    detail: str = Field(description="The dated fact or verbatim quote this reference stands on")
+
+
+class CorrespondenceKind(str, Enum):
+    SCHOOL_EMAIL = "school_email"
+    PARENT_LOG = "parent_log"
+    PROGRESS_REPORT = "progress_report"
+    SERVICE_LOG = "service_log"
+
+
+class Correspondence(BaseModel):
+    """One inbound item: a school message, a returned service log, or a
+    parent's quick note."""
+
+    item_id: str
+    received: date
+    kind: CorrespondenceKind
+    sender: str
+    subject: str
+    body: str
+
+
+class ServiceShortfall(BaseModel):
+    """Owed minus delivered for one service over one period."""
+
+    service: str
+    period_start: date
+    period_end: date
+    owed_minutes: int = Field(ge=0)
+    delivered_minutes: int = Field(ge=0)
+    shortfall_minutes: int = Field(ge=0)
+    school_confirmed_minutes: int = Field(ge=0)
+    parent_observed_minutes: int = Field(ge=0)
+    undocumented_minutes: int = Field(ge=0, description="Owed minutes with no evidence either way")
+    evidence: list[EvidenceRef]
+
+
+class ReconciliationResult(BaseModel):
+    period_start: date
+    period_end: date
+    shortfalls: list[ServiceShortfall]
+    events_considered: int = Field(ge=0)
+
+    @property
+    def total_shortfall_minutes(self) -> int:
+        return sum(s.shortfall_minutes for s in self.shortfalls)
+
+
+class DeadlineState(str, Enum):
+    UPCOMING = "upcoming"
+    DUE_SOON = "due_soon"
+    OVERDUE = "overdue"
+    MET = "met"
+
+
+class DeadlineStatus(BaseModel):
+    deadline: Deadline
+    state: DeadlineState
+    days_remaining: int = Field(description="Negative once the due date has passed")
+    met_on: date | None = None
+
+
+class RequestState(str, Enum):
+    DRAFT = "draft"
+    SENT = "sent"
+    ANSWERED = "answered"
+    UNANSWERED_OVERDUE = "unanswered_overdue"
+
+
+class RecordsRequest(BaseModel):
+    """A request for the school's own service-delivery records. An overdue,
+    unanswered request is itself evidence."""
+
+    request_id: str
+    covers_start: date
+    covers_end: date
+    services: list[str]
+    state: RequestState = RequestState.DRAFT
+    sent_on: date | None = None
+    response_due: date | None = None
+    answered_on: date | None = None
+
+
+class LetterKind(str, Enum):
+    RECORDS_REQUEST = "records_request"
+    SHORTFALL_NOTICE = "shortfall_notice"
+    COMPENSATORY_REQUEST = "compensatory_request"
+    DEADLINE_REMINDER = "deadline_reminder"
+
+
+class LetterCitation(BaseModel):
+    marker: str = Field(description="Footnote marker as it appears in the body, e.g. '[1]'")
+    claim: str = Field(description="The sentence in the body this marker supports")
+    evidence: EvidenceRef
+
+
+class Letter(BaseModel):
+    """A compiled document. Assembled from ledger facts and evidence, never
+    free-written: every factual claim in ``body`` carries a marker present in
+    ``citations`` (the cite-or-stay-silent rule)."""
+
+    kind: LetterKind
+    subject: str
+    body: str
+    citations: list[LetterCitation]
+    legal_basis: list[str] = Field(default_factory=list, description="Regulatory references, e.g. '34 CFR 300.323(a)'")
+    disclaimer: str = "This letter is documentation compiled from your child's IEP and your records. It is not legal advice."
+
+
+class Urgency(str, Enum):
+    ROUTINE = "routine"
+    TIME_SENSITIVE = "time_sensitive"
+    DEADLINE_IMMINENT = "deadline_imminent"
+
+
+class DecisionCard(BaseModel):
+    """The only thing that ever interrupts the parent."""
+
+    card_id: str
+    title: str
+    why_now: str
+    facts: list[str]
+    recommended_action: str
+    urgency: Urgency
+    deadline: date | None = None
+    draft: Letter | None = None
+
+
+class StatementLine(BaseModel):
+    service: str
+    owed_minutes: int = Field(ge=0)
+    delivered_minutes: int = Field(ge=0)
+    shortfall_minutes: int = Field(ge=0)
+    school_confirmed_minutes: int = Field(ge=0)
+    parent_observed_minutes: int = Field(ge=0)
+    undocumented_minutes: int = Field(ge=0)
+
+
+class Statement(BaseModel):
+    """The monthly artifact: owed, delivered, shortfall, evidence, what's next."""
+
+    student_alias: str
+    period_start: date
+    period_end: date
+    lines: list[StatementLine]
+    open_deadlines: list[DeadlineStatus]
+    unanswered_requests: list[RecordsRequest]
+    decisions: list[DecisionCard]
+
+    @property
+    def total_owed(self) -> int:
+        return sum(line.owed_minutes for line in self.lines)
+
+    @property
+    def total_delivered(self) -> int:
+        return sum(line.delivered_minutes for line in self.lines)
+
+    @property
+    def total_shortfall(self) -> int:
+        return sum(line.shortfall_minutes for line in self.lines)
+
+
+class AuditEntry(BaseModel):
+    """Every action the agent takes, recorded as it happens. The paper trail
+    is the product."""
+
+    entry_date: date
+    actor: str = Field(description="Which agent or module acted")
+    action: str
+    detail: str
+    evidence: EvidenceRef | None = None

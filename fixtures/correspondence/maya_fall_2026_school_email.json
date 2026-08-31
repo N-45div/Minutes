@@ -1,0 +1,376 @@
+{
+  "_synthetic": "SYNTHETIC DEMONSTRATION DATA. Every person, school, district, provider and message in this file is fictional and was written for this repository. No real child, family, school, district or employee is described. Nothing here is a record of anything that happened.",
+  "fixture": "maya_fall_2026",
+  "student_alias": "Maya R.",
+  "description": "School-side email received by the parent between the first day of school (2026-09-08) and the second-quarter progress report (2027-01-29). Written to the pattern real provider correspondence follows: short, sent by the provider rather than the district, no student id, no minutes, no running total, no committed make-up date. Routine school announcements are interleaved because the parent's inbox does not sort itself.",
+  "items": [
+    {
+      "item_id": "email-2026-09-04-01",
+      "received": "2026-09-04",
+      "kind": "school_email",
+      "sender": "Mr. G. Ellery, Principal, Lincoln Elementary School",
+      "subject": "Welcome back! First day is Tuesday",
+      "body": "Dear Lincoln families,\n\nWe cannot wait to see everyone on Tuesday, September 8. Monday is the Labor Day holiday and school will be closed.\n\nDoors open at 8:05 and the first bell rings at 8:20. Class lists are posted in the front lobby.\n\nWarmly,\nMr. Ellery"
+    },
+    {
+      "item_id": "email-2026-09-09-01",
+      "received": "2026-09-09",
+      "kind": "school_email",
+      "sender": "Ms. R. Renner, M.A., CCC-SLP, Speech-Language Pathologist",
+      "subject": "Speech schedule",
+      "body": "Hi Ms. Reyes,\n\nJust introducing myself — Maya is on my caseload this year. I am still building the therapy schedule across my two buildings. Speech groups will start the week of September 21 once schedules are finalized.\n\nThanks for your patience,\nR. Renner"
+    },
+    {
+      "item_id": "email-2026-09-11-01",
+      "received": "2026-09-11",
+      "kind": "school_email",
+      "sender": "Lincoln Elementary Front Office",
+      "subject": "Picture Day - September 24",
+      "body": "Picture Day is Thursday, September 24. Order envelopes went home in backpacks today. Please return the envelope with your student on picture day; late orders are placed online.\n\nRetake day is October 29."
+    },
+    {
+      "item_id": "email-2026-09-16-01",
+      "received": "2026-09-16",
+      "kind": "school_email",
+      "sender": "Ms. K. Doyle, OTR/L, Occupational Therapist",
+      "subject": "Maya - OT",
+      "body": "Hi Ms. Reyes,\n\nI had Maya for our first OT session today, the full 45 minutes in the OT room. She warmed up quickly and did well with the scissors task. We will keep Wednesdays as our regular day.\n\nK. Doyle, OTR/L"
+    },
+    {
+      "item_id": "email-2026-09-18-01",
+      "received": "2026-09-18",
+      "kind": "school_email",
+      "sender": "Lincoln Elementary PTA",
+      "subject": "Fall fundraiser kickoff",
+      "body": "Our fall fundraiser starts Monday! Every student who returns an order form by October 2 gets an extra recess. Proceeds go toward the new playground shade structure.\n\nQuestions? Reply to this email."
+    },
+    {
+      "item_id": "email-2026-09-22-01",
+      "received": "2026-09-22",
+      "kind": "school_email",
+      "sender": "Ms. R. Renner, M.A., CCC-SLP, Speech-Language Pathologist",
+      "subject": "Re: Speech schedule",
+      "body": "We got started with Maya today. Thirty minutes, in a group of three. She was a little shy but participated by the end.\n\nR. Renner"
+    },
+    {
+      "item_id": "email-2026-09-24-01",
+      "received": "2026-09-24",
+      "kind": "school_email",
+      "sender": "Ms. R. Renner, M.A., CCC-SLP, Speech-Language Pathologist",
+      "subject": "today",
+      "body": "No speech for Maya today, unfortunately - picture day ran long and I could not pull her group. I will catch her next week as usual."
+    },
+    {
+      "item_id": "email-2026-09-25-01",
+      "received": "2026-09-25",
+      "kind": "school_email",
+      "sender": "Unified School District Transportation Department",
+      "subject": "Route 14 stop change effective Monday",
+      "body": "Beginning Monday, September 28, the Route 14 afternoon stop moves from Cedar & 4th to Cedar & 6th. Morning pickup times are unchanged. Please review the updated route card attached to this message."
+    },
+    {
+      "item_id": "email-2026-09-30-01",
+      "received": "2026-09-30",
+      "kind": "school_email",
+      "sender": "Ms. K. Doyle, OTR/L, Occupational Therapist",
+      "subject": "Maya - OT",
+      "body": "OT went well today. We worked on letter formation with the raised-line paper. She asked to take the putty home - I told her it lives in the OT room!\n\nK. Doyle, OTR/L"
+    },
+    {
+      "item_id": "email-2026-10-06-01",
+      "received": "2026-10-06",
+      "kind": "school_email",
+      "sender": "Mr. C. Bell, Education Specialist, Lincoln Elementary",
+      "subject": "Checking in",
+      "body": "Hi Ms. Reyes,\n\nMaya has been coming to the resource room daily for her block and she is settling in nicely. She is starting to use the visual schedule without a prompt. Nothing you need to do - just wanted you to hear something good.\n\nC. Bell"
+    },
+    {
+      "item_id": "email-2026-10-08-01",
+      "received": "2026-10-08",
+      "kind": "school_email",
+      "sender": "Ms. R. Renner, M.A., CCC-SLP, Speech-Language Pathologist",
+      "subject": "no school Friday",
+      "body": "Reminder that tomorrow, Friday October 9, is a staff development day and there is no school. Speech groups run as usual Tuesday and Thursday next week."
+    },
+    {
+      "item_id": "email-2026-10-14-01",
+      "received": "2026-10-14",
+      "kind": "school_email",
+      "sender": "Ms. K. Doyle, OTR/L, Occupational Therapist",
+      "subject": "Maya out today",
+      "body": "Maya was absent today so we missed OT. I do not have a make-up slot this week - my Thursday and Friday are evaluations. We will pick back up next Wednesday.\n\nK. Doyle, OTR/L"
+    },
+    {
+      "item_id": "email-2026-10-15-01",
+      "received": "2026-10-15",
+      "kind": "school_email",
+      "sender": "Ms. R. Renner, M.A., CCC-SLP, Speech-Language Pathologist",
+      "subject": "out at training",
+      "body": "I am out at a district training today and tomorrow, so groups will not run. I will try to make up Maya's session next week if the schedule allows."
+    },
+    {
+      "item_id": "email-2026-10-21-01",
+      "received": "2026-10-21",
+      "kind": "school_email",
+      "sender": "Ms. L. Harding, Grade 3 Teacher, Lincoln Elementary",
+      "subject": "Field trip permission slip - apple orchard",
+      "body": "Our class visits Hollow Ridge Orchard this Friday, October 23. Permission slips and the $6 bus fee are due Thursday. Students should bring a bag lunch and wear closed shoes. We leave at 9:15 and return by 2:00."
+    },
+    {
+      "item_id": "email-2026-10-22-01",
+      "received": "2026-10-22",
+      "kind": "school_email",
+      "sender": "Ms. R. Renner, M.A., CCC-SLP, Speech-Language Pathologist",
+      "subject": "good session",
+      "body": "Maya had a great session today. We worked on /s/ in words and she was self-correcting by the end without me pointing it out.\n\nR. Renner"
+    },
+    {
+      "item_id": "email-2026-10-29-01",
+      "received": "2026-10-29",
+      "kind": "school_email",
+      "sender": "Ms. R. Renner, M.A., CCC-SLP, Speech-Language Pathologist",
+      "subject": "this week",
+      "body": "I was not able to fit Maya in on Tuesday or today - her class had a lot going on with the Halloween parade and the room was in use both days. I will catch her next week."
+    },
+    {
+      "item_id": "email-2026-10-30-01",
+      "received": "2026-10-30",
+      "kind": "school_email",
+      "sender": "Dr. J. Whitfield, School Psychologist, Unified School District",
+      "subject": "Maya - counseling check-in",
+      "body": "Ms. Reyes,\n\nI met with Maya today for her monthly check-in, thirty minutes in my office. We used the feelings cards. She talked about lunch being loud. I will follow up with her teacher about seating in the cafeteria.\n\nJ. Whitfield"
+    },
+    {
+      "item_id": "email-2026-11-04-01",
+      "received": "2026-11-04",
+      "kind": "school_email",
+      "sender": "Ms. K. Doyle, OTR/L, Occupational Therapist",
+      "subject": "Maya - OT",
+      "body": "OT today went well - we worked on pencil grip and she tolerated the whole session without a break request. Good progress.\n\nK. Doyle, OTR/L"
+    },
+    {
+      "item_id": "email-2026-11-05-01",
+      "received": "2026-11-05",
+      "kind": "school_email",
+      "sender": "Ms. R. Renner, M.A., CCC-SLP, Speech-Language Pathologist",
+      "subject": "conferences",
+      "body": "Parent conferences are today so specialists are covering classrooms. No speech groups ran. Back to normal Tuesday."
+    },
+    {
+      "item_id": "email-2026-11-06-01",
+      "received": "2026-11-06",
+      "kind": "school_email",
+      "sender": "Lincoln Elementary Front Office",
+      "subject": "Report cards go home today",
+      "body": "First-quarter report cards go home in backpacks this afternoon. Families of students with an IEP will also receive a progress report on IEP goals in the same envelope.\n\nPlease sign and return the envelope on Monday."
+    },
+    {
+      "item_id": "email-2026-11-10-01",
+      "received": "2026-11-10",
+      "kind": "school_email",
+      "sender": "Ms. R. Renner, M.A., CCC-SLP, Speech-Language Pathologist",
+      "subject": "Maya",
+      "body": "Saw Maya today. Good session - we are staying on /s/ at the phrase level."
+    },
+    {
+      "item_id": "email-2026-11-12-01",
+      "received": "2026-11-12",
+      "kind": "school_email",
+      "sender": "Ms. R. Renner, M.A., CCC-SLP, Speech-Language Pathologist",
+      "subject": "short one today",
+      "body": "Heads up - Maya's session ran short today, about fifteen minutes. The assembly let out late and I had to get the next group started. She still got through her cards."
+    },
+    {
+      "item_id": "email-2026-11-18-01",
+      "received": "2026-11-18",
+      "kind": "school_email",
+      "sender": "Ms. K. Doyle, OTR/L, Occupational Therapist",
+      "subject": "no OT today",
+      "body": "No OT today - Maya's class had the Thanksgiving food drive assembly during our time. We will make every effort to reschedule as the schedule permits."
+    },
+    {
+      "item_id": "email-2026-11-19-01",
+      "received": "2026-11-19",
+      "kind": "school_email",
+      "sender": "Ms. R. Renner, M.A., CCC-SLP, Speech-Language Pathologist",
+      "subject": "speech today",
+      "body": "Speech today, good session. She is generalizing to two-word phrases with a model."
+    },
+    {
+      "item_id": "email-2026-11-20-01",
+      "received": "2026-11-20",
+      "kind": "school_email",
+      "sender": "Dr. J. Whitfield, School Psychologist, Unified School District",
+      "subject": "Maya - November session",
+      "body": "Ms. Reyes,\n\nI saw Maya today for her November counseling session, the full thirty minutes. Cafeteria seating has helped. She initiated a conversation with a peer without a prompt, which is new.\n\nJ. Whitfield"
+    },
+    {
+      "item_id": "email-2026-11-24-01",
+      "received": "2026-11-24",
+      "kind": "school_email",
+      "sender": "Ms. R. Renner, M.A., CCC-SLP, Speech-Language Pathologist",
+      "subject": "short week",
+      "body": "Short week - I saw Maya today. No groups Wednesday through Friday for the Thanksgiving holiday. Have a good break."
+    },
+    {
+      "item_id": "email-2026-11-30-01",
+      "received": "2026-11-30",
+      "kind": "school_email",
+      "sender": "Unified School District Records Office",
+      "subject": "RE: Request for education records",
+      "body": "Ms. Reyes,\n\nWe are in receipt of your correspondence dated November 16, 2026.\n\nPlease note that the District does not maintain a service log in the format you have described. Related-service providers keep session notes for their own use; those are the therapist's personal notes and are not part of the educational record.\n\nTo proceed, please complete the District's Records Request Form (attached) and return it to the Records Office. Please allow up to 45 days for processing. A records retrieval and administrative fee of $25.00 must be received before your request can be processed. Copies are billed separately at $0.25 per page.\n\nYou will receive your child's progress report at the next reporting period, which may address your concerns.\n\nRecords Office\nUnified School District"
+    },
+    {
+      "item_id": "email-2026-12-02-01",
+      "received": "2026-12-02",
+      "kind": "school_email",
+      "sender": "Ms. K. Doyle, OTR/L, Occupational Therapist",
+      "subject": "Maya - OT",
+      "body": "OT today. We started the new cutting sequence. She needed two breaks but finished it.\n\nK. Doyle, OTR/L"
+    },
+    {
+      "item_id": "email-2026-12-03-01",
+      "received": "2026-12-03",
+      "kind": "school_email",
+      "sender": "Ms. R. Renner, M.A., CCC-SLP, Speech-Language Pathologist",
+      "subject": "leaving Lincoln",
+      "body": "Ms. Reyes,\n\nI wanted you to hear it from me - Friday is my last day at Lincoln. I have accepted a position closer to home.\n\nIt has been a pleasure working with Maya. The district office will be in touch with you about coverage.\n\nAll my best,\nR. Renner"
+    },
+    {
+      "item_id": "email-2026-12-04-01",
+      "received": "2026-12-04",
+      "kind": "school_email",
+      "sender": "Ms. T. Alvarez, Case Manager, Lincoln Elementary",
+      "subject": "RE: are Maya's services on track",
+      "body": "Hi Ms. Reyes,\n\nThank you for reaching out. I have checked with the team and Maya has been receiving all of her services as outlined in her IEP. Her providers report she is making steady progress.\n\nPlease let me know if you have any other questions.\n\nT. Alvarez"
+    },
+    {
+      "item_id": "email-2026-12-07-01",
+      "received": "2026-12-07",
+      "kind": "school_email",
+      "sender": "Ms. P. Nakamura, Director of Special Education, Unified School District",
+      "subject": "Notice regarding speech-language services at Lincoln Elementary",
+      "body": "Dear Families,\n\nDue to a staffing vacancy in speech-language pathology at Lincoln Elementary, speech-language services at the school are temporarily suspended effective December 8, 2026.\n\nThe District is actively recruiting to fill this position and is exploring contracted coverage. We anticipate coverage beginning after the winter break. No impact on student progress is anticipated during this period.\n\nWe appreciate your patience.\n\nP. Nakamura\nDirector of Special Education"
+    },
+    {
+      "item_id": "email-2026-12-16-01",
+      "received": "2026-12-16",
+      "kind": "school_email",
+      "sender": "Ms. K. Doyle, OTR/L, Occupational Therapist",
+      "subject": "no OT this week",
+      "body": "No OT today - the holiday program was during our time. These minutes will be recovered when the schedule permits."
+    },
+    {
+      "item_id": "email-2026-12-18-01",
+      "received": "2026-12-18",
+      "kind": "school_email",
+      "sender": "Lincoln Elementary Front Office",
+      "subject": "Winter break - school closed Dec 21 through Jan 1",
+      "body": "Lincoln Elementary is closed for winter break from Monday, December 21 through Friday, January 1. School resumes Monday, January 4.\n\nThe front office is closed during the break. Have a wonderful holiday!"
+    },
+    {
+      "item_id": "email-2026-12-18-02",
+      "received": "2026-12-18",
+      "kind": "school_email",
+      "sender": "Dr. J. Whitfield, School Psychologist, Unified School District",
+      "subject": "December check-in",
+      "body": "Ms. Reyes,\n\nI had Maya down for December 9 and was not able to see her - my evaluation schedule was full that week and I am covering three buildings this month. I will pick her up in January.\n\nJ. Whitfield"
+    },
+    {
+      "item_id": "email-2027-01-06-01",
+      "received": "2027-01-06",
+      "kind": "school_email",
+      "sender": "Ms. K. Doyle, OTR/L, Occupational Therapist",
+      "subject": "back at it",
+      "body": "Back to OT today after the break. She remembered the cutting sequence, which was nice to see. Full session.\n\nK. Doyle, OTR/L"
+    },
+    {
+      "item_id": "email-2027-01-08-01",
+      "received": "2027-01-08",
+      "kind": "school_email",
+      "sender": "Unified School District Records Office",
+      "subject": "Records request - responsive documents enclosed",
+      "body": "Ms. Reyes,\n\nAttached please find the documents responsive to your request. Please let us know if you need anything further.\n\nRecords Office\nUnified School District"
+    },
+    {
+      "item_id": "email-2027-01-13-01",
+      "received": "2027-01-13",
+      "kind": "school_email",
+      "sender": "Ms. K. Doyle, OTR/L, Occupational Therapist",
+      "subject": "Maya - OT",
+      "body": "OT today. Working on the shoe-tying sequence now that cutting is steady.\n\nK. Doyle, OTR/L"
+    },
+    {
+      "item_id": "email-2027-01-14-01",
+      "received": "2027-01-14",
+      "kind": "school_email",
+      "sender": "Unified School District Communications",
+      "subject": "SCHOOL CLOSED - snow",
+      "body": "All Unified School District schools and offices are closed today, Thursday January 14, due to snow and hazardous road conditions. All after-school activities are cancelled. We will update families by 5:30 a.m. tomorrow."
+    },
+    {
+      "item_id": "email-2027-01-15-01",
+      "received": "2027-01-15",
+      "kind": "school_email",
+      "sender": "Mr. C. Bell, Education Specialist, Lincoln Elementary",
+      "subject": "Maya - resource room",
+      "body": "Hi Ms. Reyes,\n\nMaya missed resource room on Tuesday and again on Wednesday this week - she was in the nurse's office both days with a stomach ache. She did not come to me either day. Hope she is feeling better.\n\nC. Bell"
+    },
+    {
+      "item_id": "email-2027-01-19-01",
+      "received": "2027-01-19",
+      "kind": "school_email",
+      "sender": "Ms. S. Okonjo, Assistant Principal, Lincoln Elementary",
+      "subject": "Winter benchmark testing window",
+      "body": "Families,\n\nWinter benchmark testing runs January 19 through January 29. Please have students arrive on time and well rested.\n\nDuring the testing window, related-service sessions may be adjusted or rescheduled. Providers will resume the regular schedule the week of February 1."
+    },
+    {
+      "item_id": "email-2027-01-20-01",
+      "received": "2027-01-20",
+      "kind": "school_email",
+      "sender": "Ms. K. Doyle, OTR/L, Occupational Therapist",
+      "subject": "out sick",
+      "body": "I am out sick today so there is no OT. I have a make-up slot Friday at 1:15 - let me know if that works for her schedule."
+    },
+    {
+      "item_id": "email-2027-01-21-01",
+      "received": "2027-01-21",
+      "kind": "school_email",
+      "sender": "Dr. J. Whitfield, School Psychologist, Unified School District",
+      "subject": "Maya - January check-in",
+      "body": "Ms. Reyes,\n\nMaya and I met today for her January check-in. Thirty minutes. She brought up the speech room being closed, so I want to flag that she has noticed.\n\nJ. Whitfield"
+    },
+    {
+      "item_id": "email-2027-01-22-01",
+      "received": "2027-01-22",
+      "kind": "school_email",
+      "sender": "Ms. P. Nakamura, Director of Special Education, Unified School District",
+      "subject": "Speech-language coverage at Lincoln Elementary",
+      "body": "Dear Families,\n\nI am pleased to let you know that the District has secured a contracted speech-language pathologist, Mr. A. Okafor, M.A., CCC-SLP, who will begin serving students at Lincoln Elementary the week of January 25.\n\nMr. Okafor will be on site two days per week. Providers will contact families directly to confirm session times.\n\nThank you for your patience during the vacancy.\n\nP. Nakamura\nDirector of Special Education"
+    },
+    {
+      "item_id": "email-2027-01-26-01",
+      "received": "2027-01-26",
+      "kind": "school_email",
+      "sender": "Mr. A. Okafor, M.A., CCC-SLP, Contracted Speech-Language Pathologist",
+      "subject": "Introduction - Maya",
+      "body": "Hello Ms. Reyes,\n\nI am the new speech-language pathologist covering Lincoln. I saw Maya today for thirty minutes to get to know her and take a baseline.\n\nOne thing I should mention: I do not have a copy of her IEP yet. I have asked the office for it and will adjust once I have read it.\n\nA. Okafor, M.A., CCC-SLP"
+    },
+    {
+      "item_id": "email-2027-01-28-01",
+      "received": "2027-01-28",
+      "kind": "school_email",
+      "sender": "Mr. A. Okafor, M.A., CCC-SLP, Contracted Speech-Language Pathologist",
+      "subject": "Maya - speech",
+      "body": "Speech today. Still gathering baseline data. She was cooperative and I think we will do well together."
+    },
+    {
+      "item_id": "email-2027-01-29-01",
+      "received": "2027-01-29",
+      "kind": "school_email",
+      "sender": "Lincoln Elementary Library",
+      "subject": "Book fair next week",
+      "body": "The winter book fair opens Monday in the library and runs through Friday. Classes visit during their regular library time. Family shopping night is Wednesday from 5:00 to 7:00.\n\nVolunteers welcome - reply if you can take a shift."
+    }
+  ]
+}
