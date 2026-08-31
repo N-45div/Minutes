@@ -1,0 +1,107 @@
+{
+  "student_alias": "Maya R.",
+  "school_year": "2026–2027",
+  "iep_date": "2026-09-01",
+  "obligations": [
+    {
+      "service": "Speech-Language Therapy",
+      "minutes_per_session": 30,
+      "sessions_per_period": 2,
+      "period": "week",
+      "provider_role": "Licensed Speech-Language Pathologist",
+      "setting": "therapy room",
+      "start_date": "2026-09-08",
+      "end_date": "2027-06-11",
+      "source_quote": "Speech-Language Therapy: 30 minutes per session, 2 sessions per week, provided by a Licensed Speech-Language Pathologist in the therapy room, beginning September 8, 2026 and ending June 11, 2027."
+    },
+    {
+      "service": "Occupational Therapy",
+      "minutes_per_session": 45,
+      "sessions_per_period": 1,
+      "period": "week",
+      "provider_role": "Licensed Occupational Therapist",
+      "setting": "OT room",
+      "start_date": "2026-09-08",
+      "end_date": "2027-06-11",
+      "source_quote": "Occupational Therapy: 45 minutes per session, 1 session per week, provided by a Licensed Occupational Therapist in the OT room, beginning September 8, 2026 and ending June 11, 2027."
+    },
+    {
+      "service": "Specialized Academic Instruction",
+      "minutes_per_session": 60,
+      "sessions_per_period": 1,
+      "period": "day",
+      "provider_role": "Education Specialist",
+      "setting": "resource room",
+      "start_date": "2026-09-08",
+      "end_date": "2027-06-11",
+      "source_quote": "Specialized Academic Instruction: 60 minutes daily, provided by an Education Specialist in the resource room, beginning September 8, 2026 and ending June 11, 2027."
+    },
+    {
+      "service": "Individual Counseling",
+      "minutes_per_session": 30,
+      "sessions_per_period": 1,
+      "period": "month",
+      "provider_role": "School Psychologist",
+      "setting": "counseling office",
+      "start_date": "2026-09-08",
+      "end_date": "2027-06-11",
+      "source_quote": "Individual Counseling: 30 minutes per session, 1 session per month, provided by a School Psychologist in the counseling office, beginning September 8, 2026 and ending June 11, 2027."
+    }
+  ],
+  "deadlines": [
+    {
+      "kind": "annual_review",
+      "due": "2027-09-01",
+      "description": "IEP team will reconvene for annual review",
+      "source_quote": "The IEP team will reconvene for the annual review no later than September 1, 2027."
+    },
+    {
+      "kind": "reevaluation",
+      "due": "2028-11-14",
+      "description": "Triennial reevaluation of eligibility must be completed",
+      "source_quote": "A triennial reevaluation of eligibility must be completed no later than November 14, 2028."
+    },
+    {
+      "kind": "progress_report",
+      "due": "2026-11-06",
+      "description": "Progress report on all goals provided to parents",
+      "source_quote": "Progress reports on all goals will be provided to the parents at each grading period: November 6, 2026; January 29, 2027; April 9, 2027; and June 11, 2027."
+    },
+    {
+      "kind": "progress_report",
+      "due": "2027-01-29",
+      "description": "Progress report on all goals provided to parents",
+      "source_quote": "Progress reports on all goals will be provided to the parents at each grading period: November 6, 2026; January 29, 2027; April 9, 2027; and June 11, 2027."
+    },
+    {
+      "kind": "progress_report",
+      "due": "2027-04-09",
+      "description": "Progress report on all goals provided to parents",
+      "source_quote": "Progress reports on all goals will be provided to the parents at each grading period: November 6, 2026; January 29, 2027; April 9, 2027; and June 11, 2027."
+    },
+    {
+      "kind": "progress_report",
+      "due": "2027-06-11",
+      "description": "Progress report on all goals provided to parents",
+      "source_quote": "Progress reports on all goals will be provided to the parents at each grading period: November 6, 2026; January 29, 2027; April 9, 2027; and June 11, 2027."
+    }
+  ],
+  "accommodations": [
+    {
+      "description": "Scheduled sensory breaks every 45 minutes during instruction",
+      "source_quote": "Scheduled sensory breaks every 45 minutes during instruction."
+    },
+    {
+      "description": "A visual daily schedule provided at the start of each school day",
+      "source_quote": "A visual daily schedule provided at the start of each school day."
+    },
+    {
+      "description": "Extended time (time-and-a-half) on all classroom tests and assessments",
+      "source_quote": "Extended time (time-and-a-half) on all classroom tests and assessments."
+    },
+    {
+      "description": "Preferential seating away from high-traffic areas of the classroom",
+      "source_quote": "Preferential seating away from high-traffic areas of the classroom."
+    }
+  ]
+}
