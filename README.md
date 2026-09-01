@@ -2,19 +2,112 @@
 
 **Schools send report cards about your child. Nobody sends a statement about the school. Minutes is that statement.**
 
-A child's IEP (Individualized Education Program) is a legal promise — so many minutes of speech therapy per month, occupational therapy sessions per week, reviews by fixed dates. Minutes is a background agent, built with the [Strands Agents SDK](https://strandsagents.com), that enforces that promise:
+A child's IEP is a legal promise, written in numbers: *300 minutes of speech-language therapy a month. Occupational therapy twice a week. An annual review by March 12.* Whether those minutes are actually delivered is a question almost nobody can answer — not because the answer is hidden, but because answering it means reconciling a year of scattered emails, progress reports and half-remembered Tuesdays against a document in a drawer.
 
-1. **Active discovery** — it exercises the parent's statutory records rights on a cadence, requesting service-delivery logs, and records the school's *silence* as dated evidence.
-2. **Evidence-graded ledger** — every service minute is tracked with provenance: school-confirmed, parent-observed, or documented-silence. Escalation letters cite or stay silent: every claim is footnoted to a ledger line.
-3. **The Statement** — once a month, one artifact: owed, delivered, shortfall, evidence, approaching deadlines. The rest of the month, the agent is quiet. It surfaces only when there is a real decision to make.
+So the promise quietly goes unkept, and the only person positioned to notice is a parent who is already out of hours.
 
-Minutes is **not** a chatbot, and it does **not** give legal advice. It compiles documentation; the parent decides.
+Minutes is a background agent that keeps that ledger. It reads the IEP once, watches the evidence as it arrives, requests the school's own records on a schedule, and stays silent — until there is a decision only the parent can make.
 
-> Built for the AWS [Agents for Humans](https://agentsforhumans.devpost.com/) hackathon. Project started 2026-08-31, inside the submission window.
+## How it works
 
-## Status
+**1. The promise becomes a ledger.** The IEP is extracted once into typed obligations — minutes per session, sessions per period, provider, setting, start and end dates — and every statutory deadline it names. Every extracted fact carries the verbatim sentence it came from.
 
-Early scaffold — architecture and build in progress.
+**2. Evidence is graded, never assumed.** Each thing that arrives — a school email, a district service log, a progress report, a parent's note — becomes a dated fact carrying its provenance:
+
+| Grade | Means |
+| --- | --- |
+| `school_confirmed` | The district's own record or written statement |
+| `parent_observed` | The family's log — dated, but not the school's record |
+| `documented_silence` | Records were properly requested and not produced |
+
+**3. Active discovery.** Minutes does not wait for evidence to appear. It exercises the parent's statutory right of access on a cadence, and when a request goes unanswered past its response window, it records that silence as dated evidence. A school that will not produce its logs has itself created documentation.
+
+**4. Reconciliation keeps four buckets apart.** For every service, over every period:
+
+```
+owed  =  delivered  +  excused  +  documented misses  +  undocumented
+```
+
+`undocumented` is the honest one, and the reason the tool can be trusted: minutes with no record either way are *not* missed minutes. They are a gap in the evidence, and the correct response to them is to request records — never to accuse.
+
+**5. Letters are compiled, not written.** Every factual sentence in an outgoing letter carries a footnote marker bound to a specific piece of evidence. A claim without evidence is not softened or hedged — it is omitted. `validate_letter()` rejects any letter with a dangling marker, an uncited claim, or a legal authority outside a verified allowlist. The result is a document that structurally cannot fabricate an accusation.
+
+**6. The Statement.** Once a month, one artifact — owed, delivered, excused, short, and where every figure came from:
+
+> **7,050 minutes (117.5 hours) short this period, 7,020 minutes of it with no record either way.**
+>
+> 8,520 minutes owed. 1,365 minutes documented as delivered. 105 minutes excluded as falling on dates a record notes your child was absent. Nobody has recorded 7,020 minutes of that shortfall either way, which is a gap in the evidence rather than a record of non-delivery.
+
+The rest of the month, the agent is quiet. That silence is the feature.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    IEP[IEP document]
+    MAIL[School emails · service logs<br/>progress reports · parent notes]
+    AUDIT[(Audit log — every action,<br/>dated, with its evidence)]
+
+    IEP -->|extract once, cached| LEDGER[(Obligations ledger<br/>typed, every fact cited)]
+    MAIL -->|classify, grade provenance| EVENTS[(Evidence events)]
+
+    DISC[Active discovery<br/>records requests on a cadence] -->|unanswered past the<br/>response window| EVENTS
+    LEDGER --> DISC
+
+    LEDGER --> RECON[Reconciliation<br/>owed − delivered − excused<br/>undocumented kept apart]
+    EVENTS --> RECON
+
+    LEDGER --> CLOCKS[Deadline clocks<br/>statutory lead times]
+
+    RECON --> DECIDE{Does this need<br/>the parent?}
+    CLOCKS --> DECIDE
+    DISC --> DECIDE
+
+    DECIDE -->|most weeks| QUIET[Nothing needs you]
+    DECIDE -->|a real decision| CARD[Decision card<br/>+ compiled draft letter]
+
+    RECON --> STMT[Monthly Statement]
+    CLOCKS --> STMT
+
+    CARD -->|interrupt: parent approves| SEND[Send]
+    CARD -.->|parent declines,<br/>recorded either way| AUDIT
+
+    SEND --> AUDIT
+    DISC --> AUDIT
+
+    style QUIET fill:#e8f5e9,stroke:#66bb6a
+    style CARD fill:#fff3e0,stroke:#ffa726
+    style AUDIT fill:#eceff1,stroke:#90a4ae
+```
+
+The engine is deterministic wherever correctness matters. The model reads unstructured text and writes connective prose; it never decides a number, a date, or whether a school fell short. That division is why the arithmetic is reproducible and why the test suite can verify it without a network.
+
+## Quickstart
+
+```bash
+git clone https://github.com/N-45div/Minutes.git
+cd Minutes
+python -m venv .venv && .venv/Scripts/activate      # Windows
+pip install -r requirements.txt
+
+python -m pytest tests/ -q                          # hermetic: no network, no credentials
+```
+
+To re-extract the ledger from the sample IEP (the one step that calls a model, and requires AWS credentials with Amazon Bedrock access):
+
+```bash
+python scripts/extract_once.py
+```
+
+## What Minutes is not
+
+- **Not a chatbot.** There is nothing to open and nothing to converse with. It works in the background and interrupts only for a decision.
+- **Not legal advice.** It compiles documentation from the IEP and the family's own records. What to do with that documentation is the parent's decision, with their advocate or attorney if they have one. Every compiled letter says so.
+- **Not a claim about any real school or child.** Every document in `fixtures/` is synthetic and marked as such.
+
+## Sample case
+
+`fixtures/iep_maya.md` is a fictional IEP for a fictional third-grader, with four services and six deadlines. `fixtures/correspondence/` is a synthetic Fall 2026 semester — routine confirmations, cancellations for assemblies and snow days, a speech-pathologist vacancy that quietly stops a service for weeks, a partially produced service log, a deflected records request, and a parent's own notes.
 
 ## License
 
