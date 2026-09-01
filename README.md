@@ -100,6 +100,35 @@ To re-extract the ledger from the sample IEP (the one step that calls a model, a
 python scripts/extract_once.py
 ```
 
+## Running it
+
+**Locally, as the AgentCore service** (the same HTTP contract the cloud runtime speaks):
+
+```bash
+python app.py                                        # serves on 127.0.0.1:8080
+curl -X POST localhost:8080/invocations -H 'Content-Type: application/json'      -d '{"action": "wake", "today": "2026-12-01"}'
+```
+
+`wake` and `statement` never call a model. `ask` runs the caseworker agent; when it reaches a step that would put a letter in front of the school, it pauses on a Strands interrupt and the response comes back as `awaiting_approval` with the interrupt ids and the compiled letter. The parent's decision goes back by id:
+
+```json
+{"action": "answer", "answers": {"<interrupt id>": "approve"}}
+```
+
+Anything other than an explicit approval is a decline, and a decline is recorded as carefully as an approval. An approval releases the letter to the family's outbox; it does not send it.
+
+**On Amazon Bedrock AgentCore Runtime.** The project config is in `agentcore/` — a CodeZip runtime, so no container build is needed on any platform:
+
+```bash
+npm install -g @aws/agentcore
+aws login                                            # or any configured credentials
+echo '[{"name":"default","account":"<12-digit account>","region":"us-east-1"}]' > agentcore/aws-targets.json
+agentcore deploy -y
+python scripts/invoke_runtime.py '{"action": "wake", "today": "2026-12-01"}'
+```
+
+The deploy creates one CloudFormation stack: the runtime, its execution role, and nothing that runs while idle. Every session is its own isolated microVM, and the session id carries the case from one invocation to the next.
+
 ## What Minutes is not
 
 - **Not a chatbot.** There is nothing to open and nothing to converse with. It works in the background and interrupts only for a decision.
