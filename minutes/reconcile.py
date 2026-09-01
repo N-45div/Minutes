@@ -773,17 +773,18 @@ def reconcile(
         excused_minutes = min(max(0, owed_minutes - delivered_minutes), excused_priced)
         shortfall_minutes = max(0, owed_minutes - delivered_minutes - excused_minutes)
 
+        # Two figures, and the order they are computed in is the honesty rule.
+        #
         # A slot is retired from "no record either way" only by a record the
-        # district produced — or by an absence, which is a record of why the
-        # session did not happen and is already out of the shortfall. Counting
-        # an excused slot here as well would put one slot in two buckets.
+        # district produced. A parent's note and a documented silence both
+        # leave it undocumented on purpose (see rule 3 at module top), and an
+        # excused slot is already out of the shortfall, so counting it here too
+        # would put one slot in two buckets.
         #
         # Excused SESSIONS, not excused dates: five parent-logged absence dates
         # against a weekly service account for the one session they displaced,
         # and the other slots in that stretch are still slots nobody recorded
-        # anything about. (Where the cap above bit, delivery has already
-        # covered the promise and the undocumented figure is floored at zero by
-        # the shortfall anyway.)
+        # anything about.
         documented_dates = {
             event.event_date
             for event in matched
@@ -792,10 +793,35 @@ def reconcile(
         sessions_undocumented = max(
             0, sessions_owed - len(documented_dates - excused_dates) - excused_sessions
         )
+
+        # The district's own record that a session did not happen is the
+        # strongest evidence this ledger ever holds, and it takes precedence in
+        # the shortfall. Capping undocumented against the bare shortfall
+        # instead let a calendar that over-counts sessions swallow the whole
+        # figure, so a term in which the district itself recorded missed
+        # sessions reported them as "nobody can tell" — erasing the only
+        # minutes a school actually has to answer for.
+        #
+        # A date the district also records a delivery on is not a miss: the
+        # delivery decides that date.
+        delivered_dates = {event.event_date for event in delivered}
+        documented_miss_dates = (
+            {
+                event.event_date
+                for event in matched
+                if not event.delivered and event.provenance in _DISTRICT_ANSWERABLE
+            }
+            - excused_dates
+            - delivered_dates
+        )
+        documented_miss_minutes = min(
+            shortfall_minutes, math.ceil(len(documented_miss_dates) * per_session)
+        )
         # Rounded up: a fraction of a minute belongs in "we cannot tell", never
         # in the documented shortfall.
         undocumented_minutes = min(
-            shortfall_minutes, math.ceil(sessions_undocumented * per_session)
+            shortfall_minutes - documented_miss_minutes,
+            math.ceil(sessions_undocumented * per_session),
         )
 
         shortfalls.append(

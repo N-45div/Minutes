@@ -48,7 +48,7 @@ COUNSELING = "Individual Counseling"
 # Hand-computed from fixtures/cache/iep_maya_ledger.json against the cached
 # events, per service, for 2026-09-01..2026-12-19.
 EXPECTED_SHORTFALLS = {
-    SPEECH: {"owed": 870, "delivered": 615, "excused": 0, "short": 255, "undocumented": 255},
+    SPEECH: {"owed": 870, "delivered": 615, "excused": 0, "short": 255, "undocumented": 195},
     OT: {"owed": 630, "delivered": 585, "excused": 45, "short": 0, "undocumented": 0},
     SAI: {"owed": 4440, "delivered": 0, "excused": 0, "short": 4440, "undocumented": 4440},
     COUNSELING: {"owed": 90, "delivered": 60, "excused": 0, "short": 30, "undocumented": 0},
@@ -259,7 +259,7 @@ def test_reconcile_totals_agree_with_the_per_service_rows():
     assert totals["delivered_minutes"] == 1260
     assert totals["excused_minutes"] == 45
     assert totals["shortfall_minutes"] == 4725
-    assert totals["undocumented_minutes"] == 4695
+    assert totals["undocumented_minutes"] == 4635
 
     for field, key in (
         ("owed_minutes", "owed"),
@@ -475,7 +475,7 @@ def test_shortfall_notice_carries_the_period_arithmetic():
 
     assert result["escalated"] is False
     assert result["shortfall_minutes"] == 4725
-    assert result["undocumented_minutes"] == 4695
+    assert result["undocumented_minutes"] == 4635
 
     letter = result["letter"]
     assert letter["kind"] == "shortfall_notice"

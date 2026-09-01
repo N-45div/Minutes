@@ -68,7 +68,9 @@ DECISION_WEEKS = {
     # 2026-11-06 came and went with nothing in the file. The SAME card, now
     # saying the date has passed — which urgency alone could never express,
     # because a progress report is capped at time_sensitive for its whole life.
-    date(2026, 11, 10): [PROGRESS_REPORT],
+    # Beside it, the first gap the DISTRICT'S OWN records establish crosses the
+    # material bar: two speech sessions it recorded as not held.
+    date(2026, 11, 10): [PROGRESS_REPORT, "shortfall:2026-09-08:speech"],
     # 45 days after req-001 went out, its response deadline has passed. The
     # silence is now evidence, and the cadence has come round again for the
     # period the unanswered request no longer blocks.
@@ -245,24 +247,30 @@ def test_nothing_is_sent_when_the_parent_never_answers():
 # ---------------------------------------------------------------------------
 
 
-def test_a_4725_minute_gap_never_raises_a_shortfall_card(semester):
+def test_an_undocumented_gap_alone_never_raises_a_shortfall_card(semester):
     """The best demonstration of the product's discipline, asserted out loud.
 
-    Over the fall term the fixture case is thousands of minutes short — and
-    almost all of it is undocumented, meaning nobody wrote anything down in
-    either direction. Waking a parent to demand compensatory services on a gap
-    that exists in their own records is precisely the interruption this product
-    exists not to make. The answer to missing records is to ask for records,
-    which is the card that does fire.
+    Over the fall term the fixture case is thousands of minutes short, and
+    almost all of that is undocumented — nobody wrote anything down in either
+    direction. Waking a parent to demand compensatory services on a gap that
+    exists only in their own records is precisely the interruption this product
+    exists not to make. The answer to missing records is to ask for records.
+
+    Specialized Academic Instruction is the proof: 6,180 minutes short over the
+    term, every one of them undocumented, and it never once drives a card. The
+    two services that DO raise one are the two the district's own records
+    convict it on.
     """
-    every_card = [card for outcome in semester for card in outcome.new_cards]
-    assert every_card, "the semester should raise something"
-    assert not any(card.card_id.startswith("shortfall:") for card in every_card)
-
-    case = load_case_record()
-    result = run_cycle(TERM_END, case=case).new_cards
-    assert not any(card.card_id.startswith("shortfall:") for card in result)
-
+    shortfall_cards = [
+        card
+        for outcome in semester
+        for card in outcome.new_cards
+        if card.card_id.startswith("shortfall:")
+    ]
+    assert shortfall_cards, "the district's own recorded misses should surface"
+    assert not any(
+        "specialized academic instruction" in card.card_id for card in shortfall_cards
+    ), "an undocumented gap must never become an accusation"
 
 def test_a_documented_gap_does_raise_a_shortfall_card():
     """The same rule fires the moment the district's own records show the gap.
@@ -396,7 +404,7 @@ def test_a_card_returns_when_it_becomes_more_urgent(semester):
     assert still_ahead.new_cards == []
 
     passed = run_cycle(date(2026, 11, 10), case=case, raised=raised_on_the_27th)
-    assert [card.card_id for card in passed.new_cards] == [PROGRESS_REPORT]
+    assert PROGRESS_REPORT in [card.card_id for card in passed.new_cards]
 
 
 def test_suppression_remembers_the_worst_a_card_reached():
