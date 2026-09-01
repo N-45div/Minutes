@@ -6,7 +6,7 @@ A child's IEP is a legal promise, written in numbers: *300 minutes of speech-lan
 
 So the promise quietly goes unkept, and the only person positioned to notice is a parent who is already out of hours.
 
-Minutes is a background agent that keeps that ledger. It reads the IEP once, watches the evidence as it arrives, requests the school's own records on a schedule, and stays silent — until there is a decision only the parent can make.
+Minutes is a background agent that keeps that ledger. It reads the IEP once, reconciles the evidence against it, works out when the school's own records are due to be asked for, and stays silent — until there is a decision only the parent can make.
 
 ## How it works
 
@@ -20,7 +20,7 @@ Minutes is a background agent that keeps that ledger. It reads the IEP once, wat
 | `parent_observed` | The family's log — dated, but not the school's record |
 | `documented_silence` | Records were properly requested and not produced |
 
-**3. Active discovery.** Minutes does not wait for evidence to appear. It exercises the parent's statutory right of access on a cadence, and when a request goes unanswered past its response window, it records that silence as dated evidence. A school that will not produce its logs has itself created documentation.
+**3. Active discovery.** Minutes does not wait for evidence to appear. On a fixed cadence it works out that the parent's statutory right of access is due to be exercised again, and compiles the request — which the parent approves and then posts themselves, by a channel that proves delivery. Minutes has no mail channel and does not pretend to: the 45-day response clock starts only when the parent reports the date the district received it, because that receipt date is what every later statement about the district's silence rests on. When a request does go unanswered past that window, the silence is recorded as dated evidence. A school that will not produce its logs has itself created documentation.
 
 **4. Reconciliation keeps four buckets apart.** For every service, over every period:
 
@@ -69,9 +69,10 @@ flowchart TB
     RECON --> STMT[Monthly Statement]
     CLOCKS --> STMT
 
-    CARD -->|interrupt: parent approves| SEND[Send]
+    CARD -->|interrupt: parent approves| SEND[Ready to send<br/>the parent posts it]
     CARD -.->|parent declines,<br/>recorded either way| AUDIT
 
+    SEND -->|parent reports the<br/>date of receipt| DISC
     SEND --> AUDIT
     DISC --> AUDIT
 
@@ -104,6 +105,7 @@ python scripts/extract_once.py
 - **Not a chatbot.** There is nothing to open and nothing to converse with. It works in the background and interrupts only for a decision.
 - **Not legal advice.** It compiles documentation from the IEP and the family's own records. What to do with that documentation is the parent's decision, with their advocate or attorney if they have one. Every compiled letter says so.
 - **Not a claim about any real school or child.** Every document in `fixtures/` is synthetic and marked as such.
+- **Not a mail client and not a scheduler.** It does not read your inbox and it cannot post anything. It compiles the letter, the parent sends it by a channel that proves delivery, and they tell Minutes the date it arrived — which is the date the law actually counts from. The weekly wake-up is a function something external calls; no scheduler ships in this repo.
 
 ## Sample case
 
