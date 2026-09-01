@@ -15,3 +15,4 @@ agentcore/.cache/
 agentcore/cdk/cdk.out/
 agentcore/*/staging/
 agentcore/minutes/
+agentcore/aws-targets.json
