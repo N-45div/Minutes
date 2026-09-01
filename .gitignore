@@ -8,3 +8,10 @@ credentials*
 node_modules/
 dist/
 .DS_Store
+
+# AgentCore build artifacts and CLI cache
+agentcore/*.zip
+agentcore/.cache/
+agentcore/cdk/cdk.out/
+agentcore/*/staging/
+agentcore/minutes/

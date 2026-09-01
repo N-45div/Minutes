@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "minutes"
+version = "0.1.0"
+description = "The statement schools never send: an agent that keeps a child's IEP on the record."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "strands-agents==1.54.0",
+    "strands-agents-tools==0.8.7",
+    "boto3>=1.35",
+    "botocore[crt]>=1.35",
+    "pydantic>=2.8",
+    "bedrock-agentcore>=1.22",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["minutes"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning:bedrock_agentcore.*"]
