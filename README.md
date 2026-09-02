@@ -32,11 +32,13 @@ owed  =  delivered  +  excused  +  documented misses  +  undocumented
 
 **5. Letters are compiled, not written.** Every factual sentence in an outgoing letter carries a footnote marker bound to a specific piece of evidence. A claim without evidence is not softened or hedged — it is omitted. `validate_letter()` rejects any letter with a dangling marker, an uncited claim, or a legal authority outside a verified allowlist. The result is a document that structurally cannot fabricate an accusation.
 
+**And nothing leaves without the parent — enforced by the framework, not the prompt.** Strands evaluates [`minutes/policy/minutes.cedar`](minutes/policy/minutes.cedar) before every tool call. The policy is deny-by-default with no wildcard: reading and drafting tools are permitted by name; the two tools whose output leaves the family are permitted only while the parent's answer on that exact call is *asking* or *approved*, read from the agent's own interrupt state — never from the tool's arguments, so nothing the model writes into a call can supply it. A declined letter is refused before the tool re-enters and kept whole on the record.
+
 **6. The Statement.** Once a month, one artifact — owed, delivered, excused, short, and where every figure came from:
 
-> **7,050 minutes (117.5 hours) short this period, 7,020 minutes of it with no record either way.**
+> **7,050 minutes (117.5 hours) short this period, 6,825 minutes of it with no record either way.**
 >
-> 8,520 minutes owed. 1,365 minutes documented as delivered. 105 minutes excluded as falling on dates a record notes your child was absent. Nobody has recorded 7,020 minutes of that shortfall either way, which is a gap in the evidence rather than a record of non-delivery.
+> 8,520 minutes owed. 1,365 minutes documented as delivered. 105 minutes excluded as falling on dates a record notes your child was absent. Nobody has recorded 6,825 minutes of that shortfall either way, which is a gap in the evidence rather than a record of non-delivery.
 
 The rest of the month, the agent is quiet. That silence is the feature.
 
