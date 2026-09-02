@@ -21,6 +21,13 @@ def _invoke(payload: dict, session_id: str | None = None) -> dict:
     return app.invoke(payload, context)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_state(tmp_path, monkeypatch):
+    """Every test gets its own session store and an empty caseworker cache."""
+    monkeypatch.setattr(app, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(app, "_caseworkers", {})
+
+
 def test_the_entrypoint_is_registered():
     assert "main" in app.app.handlers
 
@@ -102,3 +109,29 @@ def test_an_answer_without_answers_is_refused_before_any_agent_is_built(monkeypa
 def test_a_session_id_is_minted_when_the_runtime_gives_none():
     out = _invoke({"action": "explode"})
     assert len(out["session_id"]) >= 33, "AgentCore rejects session ids shorter than 33 characters"
+
+
+def test_a_second_wake_in_the_same_session_suppresses_what_the_first_raised():
+    session = "w" * 40
+    first = _invoke({"action": "wake", "today": "2026-12-01"}, session_id=session)
+    assert first["status"] == "done" and len(first["new_cards"]) == 2 and first["suppressed"] == 0
+
+    again = _invoke({"action": "wake", "today": "2026-12-02"}, session_id=session)
+    assert again["status"] == "done"
+    assert again["new_cards"] == [], "nothing changed overnight, so nothing is re-raised"
+    assert again["suppressed"] == 2
+
+
+def test_wakes_in_different_sessions_do_not_share_what_was_raised():
+    _invoke({"action": "wake", "today": "2026-12-01"}, session_id="x" * 40)
+    other = _invoke({"action": "wake", "today": "2026-12-01"}, session_id="y" * 40)
+    assert len(other["new_cards"]) == 2 and other["suppressed"] == 0
+
+
+def test_what_a_wake_raised_survives_a_fresh_process(monkeypatch):
+    """The caseworker cache is emptied, so the next wake must rebuild from the session store."""
+    session = "z" * 40
+    _invoke({"action": "wake", "today": "2026-12-01"}, session_id=session)
+    monkeypatch.setattr(app, "_caseworkers", {})
+    again = _invoke({"action": "wake", "today": "2026-12-02"}, session_id=session)
+    assert again["new_cards"] == [] and again["suppressed"] == 2

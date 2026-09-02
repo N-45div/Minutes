@@ -37,12 +37,18 @@ from typing import Any
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 
 from minutes.agent import Caseworker, build_caseworker
-from minutes.cycle import run_cycle
-from minutes.tools import build_monthly_statement
+from minutes.cycle import RaisedCard, run_cycle
+from minutes.tools import build_monthly_statement, case_requests, load_case_record, store_requests
 
 app = BedrockAgentCoreApp()
 
 STATE_DIR = Path(os.environ.get("MINUTES_STATE_DIR", Path(tempfile.gettempdir()) / "minutes-state"))
+
+# The cards already put in front of this parent, at the worst they reached.
+# Kept in agent state beside the records-request machine so a wake can
+# suppress what an earlier wake raised. Without it every wake re-raises the
+# same cards, which trains a parent to close them unread.
+STATE_RAISED = "minutes.raised"
 
 _caseworkers: dict[str, Caseworker] = {}
 
@@ -90,8 +96,32 @@ def _result(worker: Caseworker, result: Any) -> dict:
     }
 
 
-def _wake(payload: dict) -> dict:
-    outcome = run_cycle(_day(payload, "today", date.today()))
+def _wake(worker: Caseworker, payload: dict) -> dict:
+    """One scheduled wake, carrying the case forward from the last one.
+
+    State threads through in exactly the two places the weekly cycle threads
+    it: the records-request state machine (shared with the send tools, so a
+    request the parent released is visible to the next wake) and the ids
+    already raised. Both live in the caseworker's session, so they come back
+    in a later invocation of the same session.
+    """
+    agent = worker.agent
+    case = load_case_record()
+    raised = {
+        key: RaisedCard.model_validate(value)
+        for key, value in (agent.state.get(STATE_RAISED) or {}).items()
+    }
+    outcome = run_cycle(
+        _day(payload, "today", date.today()),
+        case=case,
+        requests=case_requests(agent, case),
+        raised=raised,
+    )
+    store_requests(agent, outcome.requests)
+    agent.state.set(
+        STATE_RAISED, {key: card.model_dump(mode="json") for key, card in outcome.raised.items()}
+    )
+    worker.sync()
     return {
         "status": "done",
         "today": outcome.today.isoformat(),
@@ -137,12 +167,12 @@ def invoke(payload: dict, context) -> dict:
     action = str((payload or {}).get("action", "wake")).lower()
 
     try:
-        if action == "wake":
-            return _wake(payload)
         if action == "statement":
             return _statement(payload)
 
         worker = _caseworker(session_id)
+        if action == "wake":
+            return _wake(worker, payload)
         if action == "ask":
             prompt = payload.get("prompt")
             if not prompt:
