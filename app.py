@@ -11,6 +11,14 @@ nothing to run:
     {"action": "wake", "today": "2026-10-13"}          one scheduled wake-up
     {"action": "statement", "start": ..., "end": ..., "today": ...}
 
+A wake is model-free right up until it finds a decision that carries a
+letter. Then, and only then, it hands the caseworker one instruction naming
+the exact tool call for each letter, the send tool compiles the letter and
+pauses on its interrupt, and the wake comes back carrying
+``approval.status == "awaiting_approval"`` with the interrupt ids. Most weeks
+there is nothing to hand over and no model runs at all. That is the whole
+product in one request: background work, and a human only for a decision.
+
 The rest drive the caseworker agent, and this is where the interrupt contract
 crosses the wire. ``ask`` runs the agent until it either finishes or pauses on
 an approval; a pause comes back as ``status: "awaiting_approval"`` with the
@@ -39,7 +47,8 @@ from typing import Any
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 
 from minutes.agent import Caseworker, build_caseworker
-from minutes.cycle import RaisedCard, run_cycle
+from minutes.cycle import CycleOutcome, RaisedCard, run_cycle
+from minutes.models import DecisionCard, LetterKind
 from minutes.tools import build_monthly_statement, case_requests, load_case_record, store_requests
 
 app = BedrockAgentCoreApp()
@@ -115,6 +124,44 @@ def _result(worker: Caseworker, result: Any) -> dict:
     }
 
 
+def _approval_instruction(outcome: CycleOutcome) -> str | None:
+    """The one thing a wake says to the caseworker, or None when nothing needs saying.
+
+    Each card that carries a draft becomes a single named tool call. The
+    caseworker is not asked to decide anything, weigh anything or write
+    anything: the decision rules already decided, the letter is recompiled
+    inside the tool from the ledger, and the parent is the one who chooses.
+    """
+    today = outcome.today.isoformat()
+    calls: list[str] = []
+    for card in outcome.new_cards:
+        if card.draft is None:
+            continue
+        kind = card.draft.kind
+        if kind is LetterKind.RECORDS_REQUEST:
+            calls.append(f'send_records_request(today="{today}")')
+        elif kind is LetterKind.DEADLINE_REMINDER:
+            due = card.deadline.isoformat() if card.deadline else today
+            calls.append(
+                f'send_letter(kind="deadline_reminder", today="{today}", deadline_due="{due}")'
+            )
+        else:
+            calls.append(
+                f'send_letter(kind="{kind.value}", today="{today}", '
+                f'start="{outcome.period_start.isoformat()}", end="{outcome.period_end.isoformat()}")'
+            )
+    if not calls:
+        return None
+    listed = "\n".join(f"  {index}. {call}" for index, call in enumerate(calls, 1))
+    return (
+        f"Today is {today}. The weekly check found {len(calls)} decision(s) that carry a "
+        "letter for the parent. Put each one to the parent by making exactly these tool "
+        f"calls, in order, and nothing else:\n{listed}\n"
+        "Do not summarise the case, do not restate any figure, and do not draft anything "
+        "yourself. When a call pauses for the parent's answer, stop."
+    )
+
+
 def _wake(worker: Caseworker, payload: dict) -> dict:
     """One scheduled wake, carrying the case forward from the last one.
 
@@ -141,8 +188,18 @@ def _wake(worker: Caseworker, payload: dict) -> dict:
         STATE_RAISED, {key: card.model_dump(mode="json") for key, card in outcome.raised.items()}
     )
     worker.sync()
+
+    # The loop closes here. A wake that found a letter does not leave it in a
+    # JSON list nobody reads: it puts the release decision to the parent
+    # through the same interrupt the interactive path uses.
+    approval: dict | None = None
+    instruction = _approval_instruction(outcome)
+    if instruction and payload.get("ask_parent", True):
+        approval = _result(worker, worker.ask(instruction))
+
     return {
-        "status": "done",
+        "status": approval["status"] if approval else "done",
+        "approval": approval,
         "today": outcome.today.isoformat(),
         "headline": outcome.headline,
         "quiet": outcome.quiet,

@@ -27,6 +27,11 @@ def _isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(app, "STATE_BUCKET", None)
     monkeypatch.setattr(app, "_caseworkers", {})
+    # No test here may reach a model. A test that needs the caseworker's answer
+    # replaces ask on its own worker instance (see _recording_ask below).
+    monkeypatch.setattr(
+        app.Caseworker, "ask", lambda self, prompt: pytest.fail("a test reached the model")
+    )
 
 
 def test_the_entrypoint_is_registered():
@@ -34,7 +39,7 @@ def test_the_entrypoint_is_registered():
 
 
 def test_a_wake_reports_what_it_checked_and_what_needs_the_parent():
-    out = _invoke({"action": "wake", "today": "2026-12-01"})
+    out = _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False})
 
     assert out["status"] == "done"
     assert out["today"] == "2026-12-01"
@@ -114,27 +119,27 @@ def test_a_session_id_is_minted_when_the_runtime_gives_none():
 
 def test_a_second_wake_in_the_same_session_suppresses_what_the_first_raised():
     session = "w" * 40
-    first = _invoke({"action": "wake", "today": "2026-12-01"}, session_id=session)
+    first = _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False}, session_id=session)
     assert first["status"] == "done" and len(first["new_cards"]) == 2 and first["suppressed"] == 0
 
-    again = _invoke({"action": "wake", "today": "2026-12-02"}, session_id=session)
+    again = _invoke({"action": "wake", "today": "2026-12-02", "ask_parent": False}, session_id=session)
     assert again["status"] == "done"
     assert again["new_cards"] == [], "nothing changed overnight, so nothing is re-raised"
     assert again["suppressed"] == 2
 
 
 def test_wakes_in_different_sessions_do_not_share_what_was_raised():
-    _invoke({"action": "wake", "today": "2026-12-01"}, session_id="x" * 40)
-    other = _invoke({"action": "wake", "today": "2026-12-01"}, session_id="y" * 40)
+    _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False}, session_id="x" * 40)
+    other = _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False}, session_id="y" * 40)
     assert len(other["new_cards"]) == 2 and other["suppressed"] == 0
 
 
 def test_what_a_wake_raised_survives_a_fresh_process(monkeypatch):
     """The caseworker cache is emptied, so the next wake must rebuild from the session store."""
     session = "z" * 40
-    _invoke({"action": "wake", "today": "2026-12-01"}, session_id=session)
+    _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False}, session_id=session)
     monkeypatch.setattr(app, "_caseworkers", {})
-    again = _invoke({"action": "wake", "today": "2026-12-02"}, session_id=session)
+    again = _invoke({"action": "wake", "today": "2026-12-02", "ask_parent": False}, session_id=session)
     assert again["new_cards"] == [] and again["suppressed"] == 2
 
 
@@ -178,3 +183,72 @@ def test_with_a_bucket_the_caseworker_keeps_its_case_in_s3(monkeypatch):
         "region_name": app.BEDROCK_REGION if hasattr(app, "BEDROCK_REGION") else built["region_name"],
     }
     assert built["region_name"] == "us-east-1"
+
+
+# ---------------------------------------------------------------------------
+# The loop closes: a wake that finds a letter asks the parent.
+# ---------------------------------------------------------------------------
+
+
+def _recording_ask(worker, result):
+    """Replace the caseworker's model round-trip with a recorder."""
+    calls = []
+
+    def ask(prompt):
+        calls.append(prompt)
+        return result
+
+    worker.ask = ask
+    return calls
+
+
+def test_a_quiet_wake_never_runs_the_model():
+    worker = app._caseworker("q" * 40)
+    calls = _recording_ask(worker, SimpleNamespace(stop_reason="end_turn", interrupts=None))
+
+    out = _invoke({"action": "wake", "today": "2026-09-01"}, session_id="q" * 40)
+
+    assert out["quiet"] is True and out["approval"] is None and out["status"] == "done"
+    assert calls == [], "nothing to decide, so nothing to say to the caseworker"
+
+
+def test_a_wake_that_finds_letters_names_each_tool_call_and_reports_the_interrupt():
+    worker = app._caseworker("l" * 40)
+    pending = SimpleNamespace(id="v1:tool_call:abc:def", name="send-records-request:28c3", reason={"question": "?"})
+    pending.to_dict = lambda: {"id": pending.id, "name": pending.name, "reason": pending.reason}
+    calls = _recording_ask(worker, SimpleNamespace(stop_reason="interrupt", interrupts=[pending]))
+
+    out = _invoke({"action": "wake", "today": "2026-12-01"}, session_id="l" * 40)
+
+    assert len(out["new_cards"]) == 2 and all(card["draft"] for card in out["new_cards"])
+    assert len(calls) == 1, "one instruction for the whole wake"
+    instruction = calls[0]
+    assert "Today is 2026-12-01" in instruction
+    assert 'send_letter(kind="deadline_reminder", today="2026-12-01", deadline_due="2026-11-06")' in instruction
+    assert 'send_records_request(today="2026-12-01")' in instruction
+    assert "do not draft anything yourself" in instruction
+    assert out["status"] == "awaiting_approval"
+    assert out["approval"]["status"] == "awaiting_approval"
+    assert out["approval"]["interrupts"][0]["id"] == "v1:tool_call:abc:def"
+
+
+def test_a_wake_can_be_told_not_to_ask():
+    worker = app._caseworker("n" * 40)
+    calls = _recording_ask(worker, SimpleNamespace(stop_reason="end_turn", interrupts=None))
+
+    out = _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False}, session_id="n" * 40)
+
+    assert len(out["new_cards"]) == 2 and calls == [] and out["approval"] is None
+
+
+def test_the_instruction_never_asks_the_model_to_decide_or_restate():
+    from datetime import date
+
+    from minutes.cycle import run_cycle
+
+    outcome = run_cycle(date(2026, 12, 1))
+    text = app._approval_instruction(outcome)
+    assert text is not None
+    for forbidden in ("decide", "weigh", "judgement", "summarize"):
+        assert forbidden not in text.lower().replace("summarise", "summarize") or "do not summarize" in text.lower().replace("summarise", "summarize")
+    assert "nothing else" in text
