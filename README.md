@@ -6,7 +6,7 @@ A child's IEP is a legal promise, written in numbers: *300 minutes of speech-lan
 
 So the promise quietly goes unkept, and the only person positioned to notice is a parent who is already out of hours.
 
-Minutes is a background agent that keeps that ledger. It reads the IEP once, reconciles the evidence against it, works out when the school's own records are due to be asked for, and stays silent — until there is a decision only the parent can make.
+Minutes is a background agent, built with the **Strands Agents SDK** and deployed on **Amazon Bedrock AgentCore**, that keeps that ledger. It reads the IEP once, reconciles the evidence against it, works out when the school's own records are due to be asked for, and stays silent — until there is a decision only the parent can make. When one arrives, the agent pauses on a Strands interrupt and nothing leaves the family until the parent answers.
 
 ## How it works
 
