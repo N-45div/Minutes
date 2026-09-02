@@ -46,6 +46,16 @@ letter has a different digest, therefore a different id, and the stored approval
 simply does not apply to it — a fresh approval is raised instead. A parent can
 never approve one letter and have another one released.
 
+**And the framework checks the tools' own discipline.** Every one of the
+properties above lives inside a tool body, which is where it has to live — only
+the tool has the compiled letter. :mod:`minutes.interventions` adds a second,
+independent enforcement of the first property through Strands'
+``interventions=`` layer: a Cedar policy file that permits tools by name and
+denies anything unlisted, and a gate that reads the parent's answer off the
+agent's interrupt state before a send tool is entered. Neither replaces the
+checks in the bodies; each is a reason the guarantee holds if the other is
+broken.
+
 **The paper trail is the product.** An ``AfterToolCallEvent`` hook records every
 tool call the agent makes as an :class:`~minutes.models.AuditEntry`, and the
 send tools add the narrative entries beside them: approval requested, approval
@@ -135,6 +145,7 @@ from .tools import (
 
 __all__ = [
     "ACTOR",
+    "APPROVAL_INTERRUPTS",
     "APPROVE",
     "DECLINE",
     "DEFAULT_LIMITS",
@@ -143,23 +154,27 @@ __all__ = [
     "READ_TOOLS",
     "RECORD_TOOLS",
     "SEND_TOOLS",
+    "SEND_TOOL_NAMES",
     "STATE_AUDIT",
     "STATE_DECLINED",
     "STATE_OUTBOX",
     "STATE_REQUESTS",
     "AuditTrail",
     "Caseworker",
+    "approval_interrupt_name",
     "audit_entries",
     "audit_trail",
     "build_caseworker",
     "case_requests",
     "declined",
+    "digest_from_interrupt_name",
     "fill_placeholders",
     "is_approval",
     "letter_digest",
     "outbox",
     "read_answer",
     "record_action",
+    "record_parent_decline",
     "record_request_delivery",
     "send_letter",
     "send_records_request",
@@ -597,6 +612,40 @@ def letter_digest(letter: Letter) -> str:
     return hashlib.sha256(letter.body.encode("utf-8")).hexdigest()[:12]
 
 
+APPROVAL_INTERRUPTS: Mapping[str, str] = {
+    "send_records_request": "send-records-request",
+    "send_letter": "send-letter",
+}
+"""The interrupt name each send tool raises, keyed by tool name.
+
+The full name is ``<prefix>:<letter digest>`` (see :func:`approval_interrupt_name`).
+It is a contract shared with :mod:`minutes.interventions`, which reads the
+parent's answers back off the agent's interrupt state by these names: the gate
+has to recognise *which* interrupts on a tool call are letter approvals, and
+which letter each one was for, without re-running the tool.
+"""
+
+
+def approval_interrupt_name(tool_name: str, digest: str) -> str:
+    """The name a send tool gives the interrupt that shows a letter to the parent."""
+    return f"{APPROVAL_INTERRUPTS[tool_name]}:{digest}"
+
+
+def digest_from_interrupt_name(tool_name: str, name: str) -> str | None:
+    """The letter digest an interrupt name carries, or ``None`` if it is not one of ours.
+
+    ``None`` for anything that is not the approval interrupt of *this* tool —
+    another handler's confirm prompt on the same call, say — so that a reader
+    never mistakes some other question's answer for the parent's decision on a
+    letter.
+    """
+    prefix = f"{APPROVAL_INTERRUPTS[tool_name]}:"
+    if not name.startswith(prefix):
+        return None
+    digest = name[len(prefix) :]
+    return digest or None
+
+
 def is_approval(answer: Any) -> bool:
     """True only for an answer positively recognised as approval.
 
@@ -832,14 +881,13 @@ def _release(
     return item
 
 
-def _record_decline(
+def record_parent_decline(
     agent: Agent,
-    letter: Letter,
+    shown: Mapping[str, Any],
+    answer: Any,
     *,
     on: date,
-    what: str,
-    reference: str,
-    detail: str,
+    refused_by: str | None = None,
 ) -> None:
     """Record a decline — the entry, and the document that was declined.
 
@@ -847,24 +895,63 @@ def _record_decline(
     it" is a fact about the case, and a record of it that keeps only a one-line
     summary answers *that* they declined while losing *what*. So the compiled
     body is kept beside the entry, the same way an approved one is.
+
+    ``shown`` is the approval reason the parent was actually looking at — the
+    dict :func:`_approval_reason` built for the interrupt — and the record is
+    made from it rather than from a ``Letter`` because there are two writers.
+    The send tools call this on their resumed pass, holding the reason they
+    built. :class:`minutes.interventions.SendGate` calls it when it refuses the
+    resumed pass before the tool re-enters, holding the same dict off the
+    interrupt itself. One function means one shape in the declined list and one
+    wording in the trail whichever layer got there first; ``refused_by`` names
+    the gate when it was the gate.
     """
-    _append_state(
-        agent,
-        STATE_DECLINED,
-        {
-            "reference": reference,
-            "kind": letter.kind.value,
-            "subject": letter.subject,
-            "body": letter.body,
-            "declined_on": on.isoformat(),
-            "letter_digest": letter_digest(letter),
-            "citations": len(letter.citations),
-        },
-    )
-    record_action(
-        agent,
-        AuditEntry(entry_date=on, actor=ACTOR, action=what, detail=detail),
-    )
+    tool_name = shown.get("action", "")
+    kind = str(shown.get("letter_kind", "letter"))
+    subject = str(shown.get("subject", ""))
+    digest = str(shown.get("letter_digest", ""))
+    reference = str(shown.get("reference") or shown.get("request_id") or "")
+
+    if tool_name == "send_records_request":
+        covers = shown.get("covers") or ["?", "?"]
+        what = "parent declined a records request"
+        detail = (
+            f"Request {reference} covering {covers[0]} to {covers[-1]} was compiled and "
+            f"shown to the parent, who answered {answer!r}. Nothing was released; the "
+            f"letter (digest {digest}) is kept with the declined letters. The request "
+            "was not marked as made, so the cadence will offer it again."
+        )
+    else:
+        what = f"parent declined a {kind}"
+        detail = (
+            f'The letter "{subject}" (digest {digest}) was compiled and shown to the '
+            f"parent, who answered {answer!r}. Nothing was sent, and the letter is kept "
+            "whole with the declined letters."
+        )
+    if refused_by:
+        detail += (
+            f" The {refused_by} intervention refused the call before the tool re-entered, "
+            "so what is kept is exactly what the parent was shown."
+        )
+
+    with _STATE_LOCK:
+        _append_state(
+            agent,
+            STATE_DECLINED,
+            {
+                "reference": reference,
+                "kind": kind,
+                "subject": subject,
+                "body": str(shown.get("body", "")),
+                "declined_on": on.isoformat(),
+                "letter_digest": digest,
+                "citations": int(shown.get("citations") or 0),
+            },
+        )
+        record_action(
+            agent,
+            AuditEntry(entry_date=on, actor=ACTOR, action=what, detail=detail),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -966,46 +1053,32 @@ def send_records_request(today: str, tool_context: ToolContext) -> dict:
     # THE PAUSE. Raises on the first pass; returns the parent's answer on the
     # resumed one. The digest in the name binds their answer to this exact
     # letter -- see letter_digest().
-    response = tool_context.interrupt(
-        f"send-records-request:{shown_digest}",
-        reason=_approval_reason(
-            letter,
-            action="send_records_request",
-            question=(
-                "Release this request for the district's own service records for "
-                f"{request.covers_start.isoformat()} to {request.covers_end.isoformat()}? "
-                "You will post it yourself; Minutes cannot."
-            ),
-            context={
-                "request_id": request.request_id,
-                "covers": [request.covers_start.isoformat(), request.covers_end.isoformat()],
-                "services": list(request.services),
-                "response_would_be_due": (
-                    "45 calendar days from the date the district RECEIVES it, under "
-                    "34 CFR 300.613(a). Approving does not start that clock; telling "
-                    "Minutes the date it was received does."
-                ),
-            },
+    shown = _approval_reason(
+        letter,
+        action="send_records_request",
+        question=(
+            "Release this request for the district's own service records for "
+            f"{request.covers_start.isoformat()} to {request.covers_end.isoformat()}? "
+            "You will post it yourself; Minutes cannot."
         ),
+        context={
+            "request_id": request.request_id,
+            "covers": [request.covers_start.isoformat(), request.covers_end.isoformat()],
+            "services": list(request.services),
+            "response_would_be_due": (
+                "45 calendar days from the date the district RECEIVES it, under "
+                "34 CFR 300.613(a). Approving does not start that clock; telling "
+                "Minutes the date it was received does."
+            ),
+        },
+    )
+    response = tool_context.interrupt(
+        approval_interrupt_name("send_records_request", shown_digest), reason=shown
     )
     answer, fill = read_answer(response)
 
     if not is_approval(answer):
-        _record_decline(
-            agent,
-            letter,
-            on=now,
-            what="parent declined a records request",
-            reference=request.request_id,
-            detail=(
-                f"Request {request.request_id} covering "
-                f"{request.covers_start.isoformat()} to {request.covers_end.isoformat()} "
-                f"was compiled and shown to the parent, who answered {answer!r}. "
-                f"Nothing was released; the letter (digest {shown_digest}) is kept with "
-                "the declined letters. The request was not marked as made, so the "
-                "cadence will offer it again."
-            ),
-        )
+        record_parent_decline(agent, shown, answer, on=now)
         return {
             "released": False,
             "declined": True,
@@ -1172,33 +1245,22 @@ def send_letter(
         reference=reference,
     )
 
-    response = tool_context.interrupt(
-        f"send-letter:{shown_digest}",
-        reason=_approval_reason(
-            letter,
-            action="send_letter",
-            question=(
-                f"Release this {kind.replace('_', ' ')} for you to send to the district? "
-                "You will post it yourself; Minutes cannot."
-            ),
-            context={"reference": reference, **context},
+    shown = _approval_reason(
+        letter,
+        action="send_letter",
+        question=(
+            f"Release this {kind.replace('_', ' ')} for you to send to the district? "
+            "You will post it yourself; Minutes cannot."
         ),
+        context={"reference": reference, **context},
+    )
+    response = tool_context.interrupt(
+        approval_interrupt_name("send_letter", shown_digest), reason=shown
     )
     answer, fill = read_answer(response)
 
     if not is_approval(answer):
-        _record_decline(
-            agent,
-            letter,
-            on=now,
-            what=f"parent declined a {kind}",
-            reference=reference,
-            detail=(
-                f'The letter "{letter.subject}" (digest {shown_digest}) was compiled and '
-                f"shown to the parent, who answered {answer!r}. Nothing was sent, and the "
-                "letter is kept whole with the declined letters."
-            ),
-        )
+        record_parent_decline(agent, shown, answer, on=now)
         return {
             "released": False,
             "declined": True,
@@ -1556,6 +1618,9 @@ outbox for the family to post. These are the tools whose output is intended to
 leave the family, and the reason each of them stops for a human.
 """
 
+SEND_TOOL_NAMES = frozenset(tool.tool_name for tool in SEND_TOOLS)
+"""The same set by name, for the layers that see a tool call before the tool does."""
+
 
 # ---------------------------------------------------------------------------
 # Assembly.
@@ -1720,8 +1785,9 @@ def build_caseworker(
     trail_path: str | Path | None = None,
     limits: Limits | None = None,
     system_prompt: str = MINUTES_SYSTEM_PROMPT,
+    interventions: bool = True,
 ) -> Caseworker:
-    """Assemble the agent, its tools, its audit hook and its session.
+    """Assemble the agent, its tools, its audit hook, its interventions and its session.
 
     ``model`` defaults to the id in :mod:`minutes.config` — Haiku unless
     ``MINUTES_MODEL`` overrides it for a demo run. It is never hardcoded here,
@@ -1733,6 +1799,12 @@ def build_caseworker(
     records-request state machine all come back in a new process, and so does a
     pending approval — a parent can be asked on Monday and answer on Thursday,
     from a process that did not exist when the question was asked.
+
+    ``interventions`` is on by default and wires
+    :func:`minutes.interventions.build_interventions` — the Cedar allowlist and
+    the send gate — into the agent. Turning it off leaves every guarantee in the
+    tool bodies intact; it exists so a test can show the difference between the
+    two layers, not as a production setting.
     """
     if model is None:
         from strands.models import BedrockModel
@@ -1748,11 +1820,19 @@ def build_caseworker(
         else None
     )
 
+    # Imported here, not at the top: interventions.py reads this module's
+    # approval state and writes to its trail, so a top-level import would be
+    # circular.
+    from .interventions import build_interventions
+
     agent = Agent(
         model=model,
         tools=[*READ_TOOLS, *RECORD_TOOLS, *SEND_TOOLS],
         system_prompt=system_prompt,
         hooks=[AuditTrail()],
+        interventions=(
+            build_interventions(principal_id=session_id or agent_id) if interventions else None
+        ),
         session_manager=session,
         agent_id=agent_id,
         name="minutes-caseworker",
