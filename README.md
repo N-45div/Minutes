@@ -111,7 +111,7 @@ python app.py                                        # serves on 127.0.0.1:8080
 curl -X POST localhost:8080/invocations -H 'Content-Type: application/json'      -d '{"action": "wake", "today": "2026-12-01"}'
 ```
 
-`wake` and `statement` never call a model. `ask` runs the caseworker agent; when it reaches a step that would put a letter in front of the school, it pauses on a Strands interrupt and the response comes back as `awaiting_approval` with the interrupt ids and the compiled letter. The parent's decision goes back by id:
+`statement` never calls a model, and neither does a `wake` on a quiet week — which is most weeks. When a wake finds a decision that carries a letter, it hands the caseworker agent one instruction naming the exact tool call for each letter; the send tool compiles the letter from the ledger and pauses on a Strands interrupt, and the wake comes back as `awaiting_approval` with the interrupt ids and the compiled letter. (`ask` reaches the same interrupt interactively.) The parent's decision goes back by id, from any later invocation:
 
 ```json
 {"action": "answer", "answers": {"<interrupt id>": "approve"}}
