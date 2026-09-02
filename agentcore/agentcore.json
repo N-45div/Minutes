@@ -15,7 +15,20 @@
       "codeLocation": "./",
       "runtimeVersion": "PYTHON_3_12",
       "networkMode": "PUBLIC",
-      "protocol": "HTTP"
+      "protocol": "HTTP",
+      "envVars": [
+        {
+          "name": "MINUTES_SESSION_BUCKET",
+          "value": "minutes-case-state-1a9c7e"
+        },
+        {
+          "name": "MINUTES_SESSION_PREFIX",
+          "value": "cases/"
+        }
+      ],
+      "additionalPolicies": [
+        "agentcore/policies/state-bucket.json"
+      ]
     }
   ],
   "memories": [],

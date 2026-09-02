@@ -19,10 +19,12 @@ the parent's decisions back by id and resumes. Nothing is released without an
 answer that positively reads as approval, and that rule lives in
 :mod:`minutes.agent`, not here — this file cannot weaken it.
 
-One caseworker is kept per session id. AgentCore's session *is* the microVM,
-so an in-process map is the right lifetime; the file session manager beneath it
-means a pending approval also survives the process, which is what lets a parent
-be asked on Monday and answer on Thursday.
+One caseworker is kept per case. When ``MINUTES_SESSION_BUCKET`` is set the
+case lives in S3 and the caseworker is keyed by ``case_id`` — the microVM that
+happens to serve an invocation is incidental, and two invocations weeks apart
+on machines that never met open the same case. That is what lets a parent be
+asked on Monday and answer on Thursday. Without a bucket (a laptop, a test) the
+case is keyed by the runtime session id and kept in a directory.
 """
 
 from __future__ import annotations
@@ -44,6 +46,14 @@ app = BedrockAgentCoreApp()
 
 STATE_DIR = Path(os.environ.get("MINUTES_STATE_DIR", Path(tempfile.gettempdir()) / "minutes-state"))
 
+# Durable case state. Set on the AgentCore runtime (agentcore/agentcore.json);
+# unset on a laptop, where the session is a directory under STATE_DIR.
+STATE_BUCKET = os.environ.get("MINUTES_SESSION_BUCKET") or None
+STATE_PREFIX = os.environ.get("MINUTES_SESSION_PREFIX", "cases/")
+
+# The sample case. A real deployment names the case in the payload.
+DEFAULT_CASE_ID = "maya-demo"
+
 # The cards already put in front of this parent, at the worst they reached.
 # Kept in agent state beside the records-request machine so a wake can
 # suppress what an earlier wake raised. Without it every wake re-raises the
@@ -53,16 +63,25 @@ STATE_RAISED = "minutes.raised"
 _caseworkers: dict[str, Caseworker] = {}
 
 
-def _caseworker(session_id: str) -> Caseworker:
-    worker = _caseworkers.get(session_id)
+def _case_key(session_id: str, payload: dict) -> str:
+    """What a caseworker is keyed by: the case when state is durable, else the session."""
+    if STATE_BUCKET:
+        return str((payload or {}).get("case_id") or DEFAULT_CASE_ID)
+    return session_id
+
+
+def _caseworker(key: str) -> Caseworker:
+    worker = _caseworkers.get(key)
     if worker is None:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         worker = build_caseworker(
-            session_id=session_id,
+            session_id=key,
             storage_dir=STATE_DIR,
-            trail_path=STATE_DIR / f"{session_id}.trail.jsonl",
+            trail_path=STATE_DIR / f"{key}.trail.jsonl",
+            state_bucket=STATE_BUCKET,
+            state_prefix=STATE_PREFIX,
         )
-        _caseworkers[session_id] = worker
+        _caseworkers[key] = worker
     return worker
 
 
@@ -170,7 +189,7 @@ def invoke(payload: dict, context) -> dict:
         if action == "statement":
             return _statement(payload)
 
-        worker = _caseworker(session_id)
+        worker = _caseworker(_case_key(session_id, payload))
         if action == "wake":
             return _wake(worker, payload)
         if action == "ask":

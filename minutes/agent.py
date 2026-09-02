@@ -102,7 +102,8 @@ from strands.agent.agent_result import AgentResult
 from strands.hooks import AfterToolCallEvent, HookProvider, HookRegistry
 from strands.interrupt import Interrupt, InterruptException
 from strands.models import Model
-from strands.session import FileSessionManager
+from strands.session import FileSessionManager, S3SessionManager
+from strands.session.session_manager import SessionManager
 from strands.types.agent import Limits
 
 from .config import BEDROCK_REGION, EXTRACTION_MODEL
@@ -1648,7 +1649,7 @@ class Caseworker:
 
     agent: Agent
     limits: Limits
-    session: FileSessionManager | None = None
+    session: SessionManager | None = None
 
     def ask(self, prompt: Any) -> AgentResult:
         """One invocation, under budget, with a limit trip recorded.
@@ -1786,6 +1787,8 @@ def build_caseworker(
     limits: Limits | None = None,
     system_prompt: str = MINUTES_SYSTEM_PROMPT,
     interventions: bool = True,
+    state_bucket: str | None = None,
+    state_prefix: str = "cases/",
 ) -> Caseworker:
     """Assemble the agent, its tools, its audit hook, its interventions and its session.
 
@@ -1794,11 +1797,19 @@ def build_caseworker(
     and a test passes its own model so nothing in this package needs AWS to be
     exercised.
 
-    Passing ``session_id`` attaches a :class:`FileSessionManager`, which is what
-    makes the weekly wake-up real: messages, the audit trail, the outbox and the
+    Passing ``session_id`` attaches a session manager, which is what makes the
+    weekly wake-up real: messages, the audit trail, the outbox and the
     records-request state machine all come back in a new process, and so does a
     pending approval — a parent can be asked on Monday and answer on Thursday,
     from a process that did not exist when the question was asked.
+
+    With ``state_bucket`` the session lives in S3 (:class:`S3SessionManager`),
+    the only store that survives where this agent actually runs: on AgentCore
+    every session is its own microVM and its disk goes with it. The
+    ``session_id`` is then the *case*, not the microVM — two invocations weeks
+    apart, on machines that never met, open the same case. Without a bucket
+    the session is a directory (:class:`FileSessionManager`), which is right
+    for a laptop and for tests.
 
     ``interventions`` is on by default and wires
     :func:`minutes.interventions.build_interventions` — the Cedar allowlist and
@@ -1811,14 +1822,19 @@ def build_caseworker(
 
         model = BedrockModel(model_id=EXTRACTION_MODEL, region_name=BEDROCK_REGION)
 
-    session = (
-        FileSessionManager(
+    session: SessionManager | None = None
+    if session_id and state_bucket:
+        session = S3SessionManager(
+            session_id=session_id,
+            bucket=state_bucket,
+            prefix=state_prefix,
+            region_name=BEDROCK_REGION,
+        )
+    elif session_id:
+        session = FileSessionManager(
             session_id=session_id,
             storage_dir=str(storage_dir) if storage_dir else None,
         )
-        if session_id
-        else None
-    )
 
     # Imported here, not at the top: interventions.py reads this module's
     # approval state and writes to its trail, so a top-level import would be

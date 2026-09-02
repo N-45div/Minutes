@@ -25,6 +25,7 @@ def _invoke(payload: dict, session_id: str | None = None) -> dict:
 def _isolated_state(tmp_path, monkeypatch):
     """Every test gets its own session store and an empty caseworker cache."""
     monkeypatch.setattr(app, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(app, "STATE_BUCKET", None)
     monkeypatch.setattr(app, "_caseworkers", {})
 
 
@@ -135,3 +136,45 @@ def test_what_a_wake_raised_survives_a_fresh_process(monkeypatch):
     monkeypatch.setattr(app, "_caseworkers", {})
     again = _invoke({"action": "wake", "today": "2026-12-02"}, session_id=session)
     assert again["new_cards"] == [] and again["suppressed"] == 2
+
+
+def test_without_a_bucket_the_case_is_keyed_by_the_runtime_session():
+    assert app._case_key("s" * 40, {"case_id": "ignored"}) == "s" * 40
+
+
+def test_with_a_bucket_the_case_is_keyed_by_the_case_not_the_microvm(monkeypatch):
+    monkeypatch.setattr(app, "STATE_BUCKET", "a-bucket")
+    assert app._case_key("s" * 40, {"case_id": "case-42"}) == "case-42"
+    assert app._case_key("t" * 40, {"case_id": "case-42"}) == "case-42", "a different microVM, the same case"
+    assert app._case_key("u" * 40, {}) == app.DEFAULT_CASE_ID
+
+
+def test_with_a_bucket_the_caseworker_keeps_its_case_in_s3(monkeypatch):
+    """The S3 store is selected and keyed by the case. Constructing the real
+    S3SessionManager initializes the session in the bucket, so a stand-in
+    records what it was asked for instead of reaching the network."""
+    import minutes.agent as agent_module
+
+    built = {}
+
+    class RecordingS3SessionManager:
+        def __init__(self, *, session_id, bucket, prefix, region_name):
+            built.update(session_id=session_id, bucket=bucket, prefix=prefix, region_name=region_name)
+
+        def __getattr__(self, name):  # any hook registration the Agent asks for
+            return lambda *args, **kwargs: None
+
+    monkeypatch.setattr(agent_module, "S3SessionManager", RecordingS3SessionManager)
+    monkeypatch.setattr(app, "STATE_BUCKET", "a-bucket")
+    monkeypatch.setattr(app, "STATE_PREFIX", "cases/")
+
+    worker = app._caseworker("case-42")
+
+    assert isinstance(worker.session, RecordingS3SessionManager)
+    assert built == {
+        "session_id": "case-42",
+        "bucket": "a-bucket",
+        "prefix": "cases/",
+        "region_name": app.BEDROCK_REGION if hasattr(app, "BEDROCK_REGION") else built["region_name"],
+    }
+    assert built["region_name"] == "us-east-1"
