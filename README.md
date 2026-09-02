@@ -125,11 +125,12 @@ Anything other than an explicit approval is a decline, and a decline is recorded
 npm install -g @aws/agentcore
 aws login                                            # or any configured credentials
 echo '[{"name":"default","account":"<12-digit account>","region":"us-east-1"}]' > agentcore/aws-targets.json
+aws s3 mb s3://<your-bucket> --region us-east-1     # then set MINUTES_SESSION_BUCKET in agentcore/agentcore.json
 agentcore deploy -y
 python scripts/invoke_runtime.py '{"action": "wake", "today": "2026-12-01"}'
 ```
 
-The deploy creates one CloudFormation stack: the runtime, its execution role, and nothing that runs while idle. Every session is its own isolated microVM, and the session id carries the case from one invocation to the next.
+The deploy creates one CloudFormation stack: the runtime, its execution role with the S3 grant in `agentcore/policies/state-bucket.json`, and nothing that runs while idle. Every invocation runs in an isolated microVM, but the case does not live there: with `MINUTES_SESSION_BUCKET` set, the caseworker's session is stored in S3 under the `case_id` in the payload, so a wake next week and an approval answered days later open the same case on machines that never met.
 
 ## What Minutes is not
 
