@@ -132,6 +132,17 @@ python scripts/invoke_runtime.py '{"action": "wake", "today": "2026-12-01"}'
 
 The deploy creates one CloudFormation stack: the runtime, its execution role with the S3 grant in `agentcore/policies/state-bucket.json`, and nothing that runs while idle. Every invocation runs in an isolated microVM, but the case does not live there: with `MINUTES_SESSION_BUCKET` set, the caseworker's session is stored in S3 under the `case_id` in the payload, so a wake next week and an approval answered days later open the same case on machines that never met.
 
+**Running on a schedule.** A background agent that only runs when someone remembers to invoke it is a CLI with extra steps. `scripts/schedule_weekly.py` makes Amazon EventBridge Scheduler invoke the runtime directly every Monday morning — no Lambda in between — through a role that Scheduler alone can assume, scoped to this account and this schedule, and allowed to do exactly one thing: invoke this runtime.
+
+```bash
+python scripts/schedule_weekly.py --dry-run   # print every document; no credentials, no calls
+python scripts/schedule_weekly.py             # create (or update) the role and the schedule
+python scripts/schedule_weekly.py --show      # what is scheduled, and when it next runs
+python scripts/schedule_weekly.py --delete    # take it all back off the account
+```
+
+Scheduler waits for the runtime's reply and gives up within seconds, while a wake that finds a decision calls a model. So a scheduled wake is sent with `"background": true`: the runtime acknowledges at once with the run's id, finishes the work in the background under AgentCore's async-task tracking, records any failure in the case's audit trail, and refuses a second wake for a case that is already in flight. `{"action": "status", "run_id": ...}` reports what a run did. A weekly firing costs nothing measurable.
+
 ## What Minutes is not
 
 - **Not a chatbot.** There is nothing to open and nothing to converse with. It works in the background and interrupts only for a decision.
