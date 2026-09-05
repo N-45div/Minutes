@@ -19,6 +19,22 @@ pauses on its interrupt, and the wake comes back carrying
 there is nothing to hand over and no model runs at all. That is the whole
 product in one request: background work, and a human only for a decision.
 
+A scheduled caller cannot wait for that. Amazon EventBridge Scheduler invokes
+this runtime synchronously and gives up on the response after a short window —
+around thirty seconds, observed rather than promised — so a wake that reaches a
+model would be recorded as a failed invocation and retried, waking the same
+case twice. A scheduled wake therefore carries a flag:
+
+    {"action": "wake", "today": ..., "background": true, "run_id": ...}
+    {"action": "status", "run_id": ...}      what this microVM is doing now
+
+The work is registered as an AgentCore async task and run on a thread, and the
+invocation returns ``{"status": "accepted", "run_id": ...}`` in milliseconds.
+While a task is open ``/ping`` answers ``HealthyBusy``, which is how AgentCore
+is told this session is still working and must not be reaped. Nothing else
+changes: a wake without the flag is the synchronous wake it has always been,
+and that is still what a person, a test and ``scripts/invoke_runtime.py`` get.
+
 The rest drive the caseworker agent, and this is where the interrupt contract
 crosses the wire. ``ask`` runs the agent until it either finishes or pauses on
 an approval; a pause comes back as ``status: "awaiting_approval"`` with the
@@ -37,18 +53,20 @@ case is keyed by the runtime session id and kept in a directory.
 
 from __future__ import annotations
 
+import contextvars
 import os
 import tempfile
+import threading
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 
-from minutes.agent import Caseworker, build_caseworker
+from minutes.agent import Caseworker, build_caseworker, record_action
 from minutes.cycle import CycleOutcome, RaisedCard, run_cycle
-from minutes.models import DecisionCard, LetterKind
+from minutes.models import AuditEntry, DecisionCard, LetterKind
 from minutes.tools import build_monthly_statement, case_requests, load_case_record, store_requests
 
 app = BedrockAgentCoreApp()
@@ -211,6 +229,210 @@ def _wake(worker: Caseworker, payload: dict) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Scheduled wakes: acknowledge now, work in the background.
+# ---------------------------------------------------------------------------
+
+RUNTIME_ACTOR = "minutes-runtime"
+"""The ``actor`` on the trail entries this module writes.
+
+:mod:`minutes.agent` and :mod:`minutes.cycle` name themselves on theirs. A wake
+that never got as far as either of them was this file's.
+"""
+
+MAX_RUN_ID = 128
+"""How much of a caller-supplied run id is kept. An id is a dictionary key here."""
+
+# What the background runs of this process left behind, keyed by run id. This
+# ledger dies with the microVM, deliberately: everything a later invocation
+# needs is already in the case's session in S3, and this only answers "how did
+# the run I just started go" for the caller that started it.
+_runs: dict[str, dict[str, Any]] = {}
+_run_threads: dict[str, threading.Thread] = {}
+_inflight: dict[str, str] = {}  # case key -> the run id currently working it
+_runs_lock = threading.Lock()
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _record(run_id: str, **fields: Any) -> None:
+    with _runs_lock:
+        _runs.setdefault(run_id, {}).update(fields)
+
+
+def _run_id(payload: dict) -> str:
+    """The caller's own id for this run, or a fresh one.
+
+    EventBridge Scheduler substitutes ``<aws.scheduler.execution-id>`` into the
+    payload it sends, and it keeps that id across its own retries. Taking it is
+    what makes a retry recognisable as one: the id of a run this microVM is
+    already doing arrives a second time, and a second arrival is not a second
+    wake.
+    """
+    supplied = str((payload or {}).get("run_id") or "").strip()
+    return supplied[:MAX_RUN_ID] or uuid.uuid4().hex
+
+
+def _record_failure(worker: Caseworker, run_id: str, exc: BaseException) -> None:
+    """Put a failed scheduled wake in the case's own trail, not only in the log.
+
+    The ledger above dies with the microVM, and CloudWatch is not part of
+    anybody's case. "The weekly check ran and got nowhere" is a fact about this
+    family's case in exactly the way a budget trip is, and :mod:`minutes.agent`
+    records those for the same reason: a week nobody was told anything must not
+    read like a quiet week. A parent who later asks why November was silent
+    should find the answer in the trail they already have.
+
+    Best effort, deliberately. Whatever broke the wake may be the session store
+    itself, and a trail that cannot be written must not turn one failure into
+    two — so this reports and returns.
+    """
+    try:
+        record_action(
+            worker.agent,
+            AuditEntry(
+                entry_date=date.today(),
+                actor=RUNTIME_ACTOR,
+                action="scheduled wake failed",
+                detail=(
+                    f"Run {run_id} did not finish: {type(exc).__name__}: {exc}. Nothing from "
+                    "this wake was put to the parent and no letter was released. The case is "
+                    "as the last wake left it, and the next wake starts from there."
+                ),
+            ),
+        )
+        worker.sync()
+    except Exception:
+        app.logger.exception("could not record the failure of background wake %s", run_id)
+
+
+def _background_wake(worker: Caseworker, payload: dict, case: str) -> dict:
+    """Acknowledge a scheduled wake immediately and run it on a thread.
+
+    The work is :func:`_wake`, unchanged and unduplicated — the only difference
+    between the two paths is who waits for it.
+
+    The task is registered before the acknowledgement is returned, not as the
+    first line of the thread: ``add_async_task`` mutates the SDK's table under
+    its own lock, so the very next ``/ping`` already answers ``HealthyBusy`` and
+    there is no window in which a working session looks idle. It is completed in
+    a ``finally``, because a task left open pins the microVM to ``HealthyBusy``
+    for the rest of its life — up to the eight-hour compute ceiling — doing
+    nothing.
+
+    TWO WAKES AT ONCE. Both guards below are per microVM, which is the level
+    that matters: :data:`_caseworkers` is keyed by case, so two overlapping
+    wakes on one box would share one Strands agent, the second ``ask`` would
+    raise a concurrency error, and the model-free halves would interleave their
+    writes to one session. So a run id already seen here is a retry and is
+    refused, and a case already being worked is refused. Across microVMs
+    nothing here can help — two boxes share only S3, and the last writer of the
+    raised-card set wins. That is left alone because it is survivable: the worst
+    outcome is a card put to the parent twice, and no letter reaches a district
+    either way, because every release still waits on a parent's answer to an
+    interrupt.
+    """
+    run_id = _run_id(payload)
+    with _runs_lock:
+        seen = _runs.get(run_id)
+        if seen is not None:
+            return {"status": "duplicate_run", "run_id": run_id, "case": case, "run": dict(seen)}
+        working = _inflight.get(case)
+        if working is not None:
+            return {"status": "already_running", "run_id": working, "case": case}
+        _inflight[case] = run_id
+        _runs[run_id] = {"action": "wake", "case": case, "status": "accepted", "started_at": _now()}
+
+    task_id = app.add_async_task("wake", {"run_id": run_id, "case": case})
+
+    def _run() -> None:
+        _record(run_id, status="running")
+        try:
+            result = _wake(worker, payload)
+            _record(run_id, status="done", result=result, finished_at=_now())
+            app.logger.info("background wake %s finished (case %s)", run_id, case)
+        except BaseException as exc:  # a thread that dies quietly is a wake nobody can find
+            app.logger.exception("background wake %s failed (case %s)", run_id, case)
+            _record(
+                run_id,
+                status="error",
+                error=f"{type(exc).__name__}: {exc}",
+                finished_at=_now(),
+            )
+            _record_failure(worker, run_id, exc)
+        finally:
+            app.complete_async_task(task_id)
+            with _runs_lock:
+                if _inflight.get(case) == run_id:
+                    del _inflight[case]
+
+    # A new thread starts with an empty context, and the SDK's log formatter
+    # reads the request and session ids off contextvars. Without this copy every
+    # line a failing wake writes is unattributable in CloudWatch.
+    thread = threading.Thread(
+        target=contextvars.copy_context().run, args=(_run,), name=f"wake-{run_id}", daemon=True
+    )
+    with _runs_lock:
+        _run_threads[run_id] = thread
+    thread.start()
+
+    return {
+        "status": "accepted",
+        "run_id": run_id,
+        "case": case,
+        "how_to_check": "POST {action: 'status', run_id: <run id>} on the same runtime session",
+    }
+
+
+def _task_info() -> dict:
+    """``app.get_async_task_info()``, minus its one sharp edge.
+
+    The SDK iterates its task table with the ``for`` statement outside the
+    ``try`` that guards the loop body, so a task completing on another thread
+    mid-read raises ``RuntimeError: dictionary changed size during iteration``
+    out of the call. A read that lost that race is worth retrying; a status
+    query is not worth failing over.
+    """
+    for _ in range(3):
+        try:
+            return app.get_async_task_info()
+        except RuntimeError:
+            continue
+    return {"active_count": None, "running_jobs": [], "note": "the task table would not hold still"}
+
+
+def _status(payload: dict) -> dict:
+    """What this microVM is doing right now.
+
+    Per microVM, necessarily: both the ledger and the SDK's task table live in
+    this process. A caller has to reuse the ``runtimeSessionId`` of the
+    invocation that started the run, or it lands on another machine and is
+    told, truthfully, that nothing is running there.
+    """
+    run_id = (payload or {}).get("run_id")
+    with _runs_lock:
+        run = dict(_runs[run_id]) if run_id in _runs else None
+        runs = {known: entry.get("status") for known, entry in _runs.items()}
+    return {"status": "done", "run": run, "runs": runs, "tasks": _task_info()}
+
+
+def _join_background(timeout: float = 30.0) -> None:
+    """Wait for the background runs this process started.
+
+    Nothing in the runtime calls this. AgentCore installs no shutdown hook and a
+    daemon thread is killed without unwinding at interpreter exit — which is why
+    a wake persists the deterministic half of its work before it ever reaches a
+    model, rather than at the end. This exists so a test can drive the real
+    thread to completion instead of sleeping and hoping.
+    """
+    with _runs_lock:
+        threads = list(_run_threads.values())
+    for thread in threads:
+        thread.join(timeout)
+
+
 def _statement(payload: dict) -> dict:
     today = _day(payload, "today", date.today())
     rendered = build_monthly_statement(
@@ -234,7 +456,12 @@ def _answer(worker: Caseworker, payload: dict) -> dict:
 
 @app.entrypoint
 def invoke(payload: dict, context) -> dict:
-    """Route one invocation. Errors come back as data, never as a 500."""
+    """Route one invocation. Errors come back as data, never as a 500.
+
+    A wake carrying ``"background": true`` is acknowledged and handed to
+    :func:`_background_wake`; every other action, and a wake without the flag,
+    is answered synchronously on this thread as it always was.
+    """
     session_id = (
         getattr(context, "session_id", None)
         or (payload or {}).get("session_id")
@@ -245,9 +472,14 @@ def invoke(payload: dict, context) -> dict:
     try:
         if action == "statement":
             return _statement(payload)
+        if action == "status":
+            return _status(payload)
 
-        worker = _caseworker(_case_key(session_id, payload))
+        case = _case_key(session_id, payload)
+        worker = _caseworker(case)
         if action == "wake":
+            if payload.get("background"):
+                return _background_wake(worker, payload, case)
             return _wake(worker, payload)
         if action == "ask":
             prompt = payload.get("prompt")
@@ -271,8 +503,8 @@ def invoke(payload: dict, context) -> dict:
                 "requests": [request.model_dump(mode="json") for request in worker.requests()],
             }
         raise ValueError(
-            f"unknown action {action!r}; expected one of wake, statement, ask, answer, "
-            "outbox, declined, audit, requests"
+            f"unknown action {action!r}; expected one of wake, statement, status, ask, "
+            "answer, outbox, declined, audit, requests"
         )
     except ValueError as exc:
         return {"status": "error", "error": str(exc), "session_id": session_id}

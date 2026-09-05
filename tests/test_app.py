@@ -6,6 +6,8 @@ here; the caseworker actions are covered by tests/test_agent.py with a stub
 model, and wiring them through HTTP adds nothing a hermetic test can see.
 """
 
+import logging
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -23,15 +25,22 @@ def _invoke(payload: dict, session_id: str | None = None) -> dict:
 
 @pytest.fixture(autouse=True)
 def _isolated_state(tmp_path, monkeypatch):
-    """Every test gets its own session store and an empty caseworker cache."""
+    """Every test gets its own session store, caseworker cache and run ledger."""
     monkeypatch.setattr(app, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(app, "STATE_BUCKET", None)
     monkeypatch.setattr(app, "_caseworkers", {})
+    monkeypatch.setattr(app, "_runs", {})
+    monkeypatch.setattr(app, "_run_threads", {})
+    monkeypatch.setattr(app, "_inflight", {})
     # No test here may reach a model. A test that needs the caseworker's answer
     # replaces ask on its own worker instance (see _recording_ask below).
     monkeypatch.setattr(
         app.Caseworker, "ask", lambda self, prompt: pytest.fail("a test reached the model")
     )
+    yield
+    # No background thread outlives the test that started it: the ledger the
+    # next test gets is empty because nothing is still writing to the old one.
+    app._join_background(timeout=15)
 
 
 def test_the_entrypoint_is_registered():
@@ -252,3 +261,279 @@ def test_the_instruction_never_asks_the_model_to_decide_or_restate():
     for forbidden in ("decide", "weigh", "judgement", "summarize"):
         assert forbidden not in text.lower().replace("summarise", "summarize") or "do not summarize" in text.lower().replace("summarise", "summarize")
     assert "nothing else" in text
+
+
+# ---------------------------------------------------------------------------
+# A scheduled wake: acknowledged in milliseconds, done on a thread.
+#
+# The scheduled caller waits synchronously and gives up in about thirty
+# seconds, so what these tests hold on to is the moment between the
+# acknowledgement and the work — every one of them proves something while the
+# wake is provably still running, rather than sleeping and hoping.
+# ---------------------------------------------------------------------------
+
+
+class _HeldWake:
+    """A stand-in for ``_wake``, optionally held open so a test can look inside.
+
+    ``entered`` says the background thread reached the work; ``release`` lets it
+    finish, and is already set unless the test asked to hold it. The wait is
+    bounded so a test that forgets to release fails on its assertions rather
+    than hanging the suite.
+    """
+
+    def __init__(
+        self,
+        *,
+        result: dict | None = None,
+        error: BaseException | None = None,
+        hold: bool = False,
+    ):
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        if not hold:
+            self.release.set()
+        self.calls: list[dict] = []
+        self.result = result if result is not None else {"status": "done", "quiet": True}
+        self.error = error
+
+    def __call__(self, worker, payload: dict) -> dict:
+        self.calls.append(payload)
+        self.entered.set()
+        self.release.wait(timeout=5)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def _ping() -> str:
+    return app.app.get_current_ping_status().value
+
+
+def test_a_background_wake_is_acknowledged_while_the_work_is_still_running(monkeypatch):
+    held = _HeldWake(hold=True)
+    monkeypatch.setattr(app, "_wake", held)
+
+    out = _invoke(
+        {"action": "wake", "today": "2026-12-01", "background": True}, session_id="b" * 40
+    )
+
+    assert out["status"] == "accepted"
+    assert out["run_id"] and out["case"] == "b" * 40
+    assert held.entered.wait(5), "the work started"
+    assert not held.release.is_set(), "and the caller already has its answer"
+
+    # The session must not look idle for even one ping while this runs.
+    assert _ping() == "HealthyBusy"
+    assert app.app.get_async_task_info()["active_count"] == 1
+    assert [job["name"] for job in app.app.get_async_task_info()["running_jobs"]] == ["wake"]
+
+    held.release.set()
+    app._join_background()
+
+    assert app.app.get_async_task_info()["active_count"] == 0
+    assert _ping() == "Healthy", "the task was completed, so the microVM can be reaped again"
+    assert app._runs[out["run_id"]]["status"] == "done"
+    assert app._runs[out["run_id"]]["result"] == held.result
+
+
+def test_the_callers_run_id_is_used_so_a_retry_is_identifiable(monkeypatch):
+    monkeypatch.setattr(app, "_wake", _HeldWake())
+
+    out = _invoke(
+        {"action": "wake", "background": True, "run_id": "d32c5kddcf5bb8c3"}, session_id="r" * 40
+    )
+
+    assert out["run_id"] == "d32c5kddcf5bb8c3", "Scheduler's execution id, not one of ours"
+    app._join_background()
+
+
+def test_a_run_id_is_minted_when_the_caller_gives_none(monkeypatch):
+    monkeypatch.setattr(app, "_wake", _HeldWake())
+
+    first = _invoke({"action": "wake", "background": True}, session_id="m" * 40)
+    app._join_background()
+    second = _invoke({"action": "wake", "background": True}, session_id="n" * 40)
+    app._join_background()
+
+    assert first["run_id"] and second["run_id"]
+    assert first["run_id"] != second["run_id"]
+
+
+def test_a_retry_of_the_same_execution_does_not_wake_the_case_twice(monkeypatch):
+    held = _HeldWake()
+    monkeypatch.setattr(app, "_wake", held)
+    payload = {"action": "wake", "today": "2026-12-01", "background": True, "run_id": "exec-1"}
+
+    _invoke(dict(payload), session_id="t" * 40)
+    app._join_background()
+
+    again = _invoke(dict(payload), session_id="t" * 40)
+
+    assert again["status"] == "duplicate_run"
+    assert again["run_id"] == "exec-1"
+    assert again["run"]["status"] == "done"
+    assert len(held.calls) == 1, "the retry of a run this microVM already did is not a second wake"
+
+
+def test_a_second_wake_for_a_case_already_working_is_refused(monkeypatch):
+    held = _HeldWake(hold=True)
+    monkeypatch.setattr(app, "_wake", held)
+    session = "c" * 40
+
+    first = _invoke({"action": "wake", "background": True, "run_id": "exec-1"}, session_id=session)
+    assert held.entered.wait(5)
+
+    overlapping = _invoke(
+        {"action": "wake", "background": True, "run_id": "exec-2"}, session_id=session
+    )
+
+    assert overlapping["status"] == "already_running"
+    assert overlapping["run_id"] == first["run_id"], "the run that holds the case, not the new one"
+    assert "exec-2" not in app._runs
+
+    held.release.set()
+    app._join_background()
+    assert len(held.calls) == 1
+
+
+def test_the_background_path_runs_exactly_the_wake_the_synchronous_path_runs():
+    """No second implementation: the same ``_wake``, only nobody waits for it."""
+    payload = {"action": "wake", "today": "2026-12-01", "ask_parent": False}
+
+    direct = _invoke(dict(payload), session_id="d" * 40)
+    ack = _invoke({**payload, "background": True}, session_id="g" * 40)
+    app._join_background()
+
+    assert direct["status"] == "done" and len(direct["new_cards"]) == 2
+    assert ack["status"] == "accepted"
+    assert app._runs[ack["run_id"]]["status"] == "done"
+    assert app._runs[ack["run_id"]]["result"] == direct
+
+
+def test_a_wake_without_the_flag_is_the_synchronous_wake_it_always_was():
+    out = _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False}, session_id="s" * 40)
+
+    assert out["status"] == "done" and "run_id" not in out
+    assert app._runs == {} and app._run_threads == {}, "nothing was backgrounded"
+    assert app.app.get_async_task_info()["active_count"] == 0, "and no task was registered"
+
+
+def test_a_failing_background_wake_is_logged_and_completes_its_task(monkeypatch, caplog):
+    monkeypatch.setattr(app, "_wake", _HeldWake(error=RuntimeError("the ledger would not load")))
+    caplog.set_level(logging.ERROR, logger="bedrock_agentcore.app")
+
+    out = _invoke({"action": "wake", "background": True, "run_id": "exec-9"}, session_id="f" * 40)
+    app._join_background()
+
+    assert out["status"] == "accepted", "the caller was told the wake started, and it did"
+    assert app._runs["exec-9"]["status"] == "error"
+    assert app._runs["exec-9"]["error"] == "RuntimeError: the ledger would not load"
+
+    logged = [record for record in caplog.records if "exec-9" in record.getMessage()]
+    assert logged and logged[0].exc_info, "the traceback is in CloudWatch, keyed by the run id"
+
+    assert app.app.get_async_task_info()["active_count"] == 0
+    assert _ping() == "Healthy", "a failure must not pin the microVM to HealthyBusy for 8 hours"
+
+
+def test_a_failing_background_wake_leaves_the_case_trail_saying_so(monkeypatch):
+    """A week nobody was told anything must not read like a quiet week."""
+    monkeypatch.setattr(app, "_wake", _HeldWake(error=RuntimeError("the ledger would not load")))
+    session = "h" * 40
+
+    _invoke({"action": "wake", "background": True, "run_id": "exec-9"}, session_id=session)
+    app._join_background()
+
+    trail = _invoke({"action": "audit"}, session_id=session)["audit"]
+    failures = [entry for entry in trail if entry["action"] == "scheduled wake failed"]
+    assert len(failures) == 1
+    assert failures[0]["actor"] == app.RUNTIME_ACTOR
+    assert "exec-9" in failures[0]["detail"]
+    assert "the ledger would not load" in failures[0]["detail"]
+
+
+def test_a_failing_background_wake_does_not_take_the_runtime_down(monkeypatch):
+    monkeypatch.setattr(app, "_wake", _HeldWake(error=RuntimeError("boom")))
+    _invoke({"action": "wake", "background": True, "run_id": "exec-9"}, session_id="k" * 40)
+    app._join_background()
+
+    monkeypatch.undo()
+    after = _invoke({"action": "wake", "today": "2026-09-01"}, session_id="k" * 40)
+    assert after["status"] == "done" and after["quiet"] is True
+
+
+def test_a_trail_that_cannot_be_written_does_not_turn_one_failure_into_two(monkeypatch):
+    """The session store is a plausible cause of the failure being recorded."""
+    monkeypatch.setattr(app, "_wake", _HeldWake(error=RuntimeError("boom")))
+    monkeypatch.setattr(
+        app, "record_action", lambda agent, entry: (_ for _ in ()).throw(OSError("no state"))
+    )
+
+    _invoke({"action": "wake", "background": True, "run_id": "exec-9"}, session_id="j" * 40)
+    app._join_background()
+
+    assert app._runs["exec-9"]["status"] == "error"
+    assert app.app.get_async_task_info()["active_count"] == 0
+
+
+def test_the_status_action_reports_the_run_and_the_task_behind_it(monkeypatch):
+    held = _HeldWake(hold=True)
+    monkeypatch.setattr(app, "_wake", held)
+    session = "p" * 40
+
+    _invoke({"action": "wake", "background": True, "run_id": "exec-1"}, session_id=session)
+    assert held.entered.wait(5)
+
+    running = _invoke({"action": "status", "run_id": "exec-1"})
+
+    assert running["status"] == "done"
+    assert running["run"]["status"] == "running" and running["run"]["case"] == session
+    assert running["runs"] == {"exec-1": "running"}
+    assert running["tasks"]["active_count"] == 1
+
+    held.release.set()
+    app._join_background()
+
+    finished = _invoke({"action": "status", "run_id": "exec-1"})
+    assert finished["run"]["status"] == "done"
+    assert finished["tasks"]["active_count"] == 0
+
+
+def test_the_status_action_answers_an_unknown_run_without_a_caseworker(monkeypatch):
+    monkeypatch.setattr(app, "_caseworker", lambda key: pytest.fail("status built an agent"))
+
+    out = _invoke({"action": "status", "run_id": "never-heard-of-it"})
+
+    assert out == {"status": "done", "run": None, "runs": {}, "tasks": out["tasks"]}
+    assert out["tasks"]["active_count"] == 0
+
+
+def test_the_status_action_survives_a_task_table_that_moves_under_it(monkeypatch):
+    def racing():
+        raise RuntimeError("dictionary changed size during iteration")
+
+    monkeypatch.setattr(app.app, "get_async_task_info", racing)
+
+    out = _invoke({"action": "status"})
+
+    assert out["status"] == "done"
+    assert out["tasks"]["active_count"] is None and out["tasks"]["running_jobs"] == []
+
+
+def test_a_run_id_from_the_caller_is_bounded(monkeypatch):
+    monkeypatch.setattr(app, "_wake", _HeldWake())
+
+    out = _invoke({"action": "wake", "background": True, "run_id": "x" * 500}, session_id="v" * 40)
+    app._join_background()
+
+    assert out["run_id"] == "x" * app.MAX_RUN_ID
+
+
+def test_the_background_flag_is_explicit_and_off_by_default(monkeypatch):
+    monkeypatch.setattr(app, "_wake", lambda worker, payload: {"status": "done", "ran": True})
+
+    for payload in ({"action": "wake"}, {"action": "wake", "background": False}):
+        out = _invoke(payload, session_id="e" * 40)
+        assert out == {"status": "done", "ran": True}
+    assert app._runs == {}
