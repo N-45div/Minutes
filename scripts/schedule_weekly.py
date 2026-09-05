@@ -242,6 +242,10 @@ def wake_payload(case_id: str) -> dict[str, Any]:
         # do its work correctly and the invocation would still be recorded as
         # a failure, and then retried.
         "background": True,
+        # Scheduler keeps its execution id across its own retries, and the
+        # entrypoint takes it as the run id. That is what lets a retried
+        # invocation be recognised as the same run instead of a second wake.
+        "run_id": EXECUTION_ID,
         # The entrypoint ignores this. It is here because the scheduled time
         # cannot go in the session id, and it is what ties a CloudWatch line or
         # a dead-letter message back to the run that produced it.

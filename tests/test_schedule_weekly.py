@@ -474,3 +474,14 @@ def test_show_says_so_when_nothing_is_scheduled(plan):
     )
 
     assert lines == ["nothing scheduled: no schedule named minutes-weekly-wake in group default"]
+
+
+def test_the_scheduled_payload_carries_schedulers_execution_id_as_the_run_id():
+    """A Scheduler retry re-sends the same execution id. The entrypoint takes
+    payload["run_id"] as the run id, so this is the line that turns a retried
+    invocation into a recognised duplicate rather than a second wake."""
+    import schedule_weekly as sw
+
+    payload = sw.wake_payload("maya-demo")
+    assert payload["run_id"] == sw.EXECUTION_ID == "<aws.scheduler.execution-id>"
+    assert payload["background"] is True and payload["action"] == "wake"
