@@ -453,13 +453,17 @@ def test_a_failing_background_wake_leaves_the_case_trail_saying_so(monkeypatch):
     assert "the ledger would not load" in failures[0]["detail"]
 
 
-def test_a_failing_background_wake_does_not_take_the_runtime_down(monkeypatch):
-    monkeypatch.setattr(app, "_wake", _HeldWake(error=RuntimeError("boom")))
-    _invoke({"action": "wake", "background": True, "run_id": "exec-9"}, session_id="k" * 40)
-    app._join_background()
+def test_a_failing_background_wake_does_not_take_the_runtime_down():
+    # A scoped patch, not monkeypatch.undo(): undo() would also strip the
+    # autouse fixture's isolation, and the follow-up wake would run against
+    # the real state directory and whatever an earlier run left there.
+    with pytest.MonkeyPatch.context() as held:
+        held.setattr(app, "_wake", _HeldWake(error=RuntimeError("boom")))
+        _invoke({"action": "wake", "background": True, "run_id": "exec-9"}, session_id="k" * 40)
+        app._join_background()
 
-    monkeypatch.undo()
     after = _invoke({"action": "wake", "today": "2026-09-01"}, session_id="k" * 40)
+    assert after.get("error") is None, after
     assert after["status"] == "done" and after["quiet"] is True
 
 
