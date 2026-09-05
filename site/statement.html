@@ -1,0 +1,429 @@
+<title>Minutes for Maya R.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Public+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+  :root {
+    --paper: #F2F4EE;
+    --paper-2: #E9ECE4;
+    --ink: #1B241E;
+    --ink-2: #5B675E;
+    --ink-3: #8A948C;
+    --rule: #C7CFC2;
+    --rule-2: #DDE2D8;
+    --madder: #8B2E27;
+    --madder-tint: #F3E4E1;
+    --slate: #2F4C5A;
+    --slate-tint: #E3EAEE;
+    --lift: 0 1px 0 rgba(27, 36, 30, 0.06), 0 10px 30px -18px rgba(27, 36, 30, 0.35);
+    --serif: "Newsreader", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --sans: "Public Sans", "Segoe UI", system-ui, -apple-system, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #141A16; --paper-2: #1B221D; --ink: #E7EAE2; --ink-2: #A5AFA6; --ink-3: #6F7A71;
+      --rule: #2E3A32; --rule-2: #24302A; --madder: #D8726A; --madder-tint: #3A211F;
+      --slate: #8FB3C2; --slate-tint: #1E2C33;
+      --lift: 0 1px 0 rgba(0,0,0,0.4), 0 12px 32px -18px rgba(0,0,0,0.8);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #141A16; --paper-2: #1B221D; --ink: #E7EAE2; --ink-2: #A5AFA6; --ink-3: #6F7A71;
+    --rule: #2E3A32; --rule-2: #24302A; --madder: #D8726A; --madder-tint: #3A211F;
+    --slate: #8FB3C2; --slate-tint: #1E2C33;
+    --lift: 0 1px 0 rgba(0,0,0,0.4), 0 12px 32px -18px rgba(0,0,0,0.8);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 400 16px/1.55 var(--sans); -webkit-font-smoothing: antialiased;
+    font-variant-numeric: tabular-nums;
+  }
+  a { color: inherit; }
+  .page { max-width: 76ch; margin: 0 auto; padding: 28px 24px 80px; }
+
+  /* Masthead */
+  .masthead {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+    padding-bottom: 14px; border-bottom: 1px solid var(--ink);
+  }
+  .wordmark { font: 600 13px/1 var(--sans); letter-spacing: 0.18em; text-transform: uppercase; }
+  .wordmark small { font-weight: 400; letter-spacing: 0.06em; color: var(--ink-2); text-transform: none; margin-left: 10px; font-size: 13px; }
+  .asof { font-size: 13px; color: var(--ink-2); text-align: right; }
+  .asof b { color: var(--ink); font-weight: 500; }
+
+  /* This week */
+  .week { padding: 36px 0 8px; display: grid; gap: 14px; }
+  .eyebrow { font: 500 12px/1 var(--sans); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-2); }
+  h1 {
+    margin: 0; font: 500 44px/1.08 var(--serif); letter-spacing: -0.01em; text-wrap: balance;
+    font-variation-settings: "opsz" 72;
+  }
+  h1 .needs { color: var(--madder); }
+  .checked { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; color: var(--ink-2); font-size: 14.5px; max-width: 64ch; }
+  .checked li { padding-left: 18px; position: relative; }
+  .checked li::before { content: ""; position: absolute; left: 0; top: 0.72em; width: 8px; height: 1px; background: var(--ink-3); }
+
+  section { padding-top: 40px; }
+  h2 { margin: 0 0 14px; font: 500 22px/1.2 var(--serif); font-variation-settings: "opsz" 24; text-wrap: balance; }
+  .lede { margin: 0 0 18px; color: var(--ink-2); max-width: 64ch; }
+
+  /* Decision cards — the only lifted objects on the page */
+  .cards { display: grid; gap: 22px; }
+  .card {
+    background: var(--paper-2); border: 1px solid var(--rule); box-shadow: var(--lift);
+    padding: 22px 24px 20px; display: grid; gap: 14px;
+  }
+  .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+  .card h3 { margin: 0; font: 500 21px/1.25 var(--serif); font-variation-settings: "opsz" 24; text-wrap: balance; }
+  .chip {
+    flex: none; font: 500 11px/1 var(--sans); letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 6px 8px; border: 1px solid currentColor; color: var(--ink-2); white-space: nowrap;
+  }
+  .chip.needs { color: var(--madder); background: var(--madder-tint); border-color: transparent; }
+  .why { margin: 0; max-width: 64ch; }
+  .facts { margin: 0; padding-left: 18px; display: grid; gap: 5px; color: var(--ink-2); font-size: 15px; }
+  .facts li::marker { color: var(--ink-3); }
+  .action { margin: 0; font-size: 15px; }
+  .action b { font-weight: 600; }
+
+  details.letter { border-top: 1px solid var(--rule); padding-top: 12px; }
+  details.letter summary {
+    cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+    font: 500 12px/1 var(--sans); letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-2);
+  }
+  details.letter summary::-webkit-details-marker { display: none; }
+  details.letter summary .toggle::after { content: "Show"; }
+  details.letter[open] summary .toggle::after { content: "Hide"; }
+  .paper {
+    margin-top: 14px; background: var(--paper); border: 1px solid var(--rule-2);
+    padding: 26px 28px; font: 400 16.5px/1.6 var(--serif); font-variation-settings: "opsz" 16;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .paper .cite { color: var(--madder); font-size: 0.72em; vertical-align: super; line-height: 0; font-family: var(--sans); font-weight: 600; }
+  .paper .fill { background: var(--madder-tint); color: var(--madder); padding: 0 4px; font-family: var(--sans); font-size: 0.86em; }
+  .footnotes { margin: 14px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 13.5px; color: var(--ink-2); }
+  .footnotes li { display: grid; grid-template-columns: 2.2em 9.5em 1fr; gap: 10px; align-items: baseline; }
+  .footnotes .m { color: var(--madder); font-weight: 600; }
+  .prov { font: 500 10.5px/1 var(--sans); letter-spacing: 0.1em; text-transform: uppercase; padding: 4px 6px; background: var(--slate-tint); color: var(--slate); width: max-content; }
+  .basis { margin: 12px 0 0; font-size: 12.5px; color: var(--ink-3); overflow-wrap: anywhere; }
+  .basis b { color: var(--ink-2); font-weight: 500; }
+
+  .decide { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding-top: 4px; }
+  button {
+    font: 500 14px/1 var(--sans); letter-spacing: 0.02em; padding: 12px 18px; cursor: pointer;
+    border: 1px solid var(--ink); background: transparent; color: var(--ink); border-radius: 2px;
+  }
+  button.primary { background: var(--ink); color: var(--paper); }
+  button:hover { filter: brightness(1.08); }
+  button:focus-visible { outline: 2px solid var(--madder); outline-offset: 2px; }
+  .decide .note { font-size: 13px; color: var(--ink-3); margin-left: auto; }
+  .stamp {
+    display: none; padding: 12px 14px; border-left: 3px solid var(--ink); background: var(--paper);
+    font-size: 14.5px;
+  }
+  .card.done .decide { display: none; }
+  .card.done .stamp { display: block; }
+  .card.done { box-shadow: none; }
+  .card.done .stamp.declined { border-left-color: var(--madder); }
+
+  /* Term strip */
+  .strip { display: grid; grid-template-columns: repeat(21, 1fr); gap: 4px; margin: 8px 0 6px; }
+  .wk { aspect-ratio: 1; border: 1.5px solid var(--rule); background: transparent; position: relative; }
+  .wk.decision { background: var(--madder); border-color: var(--madder); }
+  .wk.today { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .strip-x { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-3); }
+  .legend { display: flex; gap: 18px; margin-top: 10px; font-size: 13px; color: var(--ink-2); flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+  .sw { width: 12px; height: 12px; border: 1.5px solid var(--rule); display: inline-block; }
+  .sw.decision { background: var(--madder); border-color: var(--madder); }
+  .sw.hatch { background: repeating-linear-gradient(135deg, var(--rule) 0 2px, transparent 2px 5px); }
+
+  /* Statement table */
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  th, td { padding: 10px 10px; border-bottom: 1px solid var(--rule-2); text-align: right; white-space: nowrap; vertical-align: baseline; }
+  th { font: 500 11.5px/1.2 var(--sans); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2); border-bottom: 1px solid var(--ink); }
+  th:first-child, td:first-child { text-align: left; white-space: normal; padding-left: 0; }
+  th:last-child, td:last-child { padding-right: 0; }
+  td.undoc { background: repeating-linear-gradient(135deg, var(--rule-2) 0 2px, transparent 2px 6px); }
+  tr.total td { border-top: 1px solid var(--ink); border-bottom: none; font-weight: 600; }
+  .hrs { color: var(--ink-3); font-size: 12.5px; margin-left: 6px; font-weight: 400; }
+  .headline-figure { font: 500 30px/1.15 var(--serif); font-variation-settings: "opsz" 36; margin: 0 0 8px; text-wrap: balance; }
+  .headline-figure .undoc-n { color: var(--ink-2); }
+
+  /* Deadlines & audit */
+  .rows { list-style: none; margin: 0; padding: 0; display: grid; }
+  .rows li { display: grid; grid-template-columns: 11ch 1fr auto; gap: 14px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--rule-2); font-size: 15px; }
+  .rows .d { color: var(--ink-2); }
+  .state { font: 500 11px/1 var(--sans); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2); }
+  .state.overdue { color: var(--madder); }
+  .audit li { grid-template-columns: 11ch 1fr; }
+  .audit .who { color: var(--ink-3); font-size: 12.5px; margin-left: 8px; }
+
+  footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule); color: var(--ink-3); font-size: 12.5px; display: grid; gap: 6px; max-width: 70ch; }
+
+  @media (max-width: 640px) {
+    h1 { font-size: 34px; }
+    .footnotes li { grid-template-columns: 2.2em 1fr; }
+    .footnotes .prov { grid-column: 2; }
+    .rows li { grid-template-columns: 1fr; gap: 2px; }
+    .strip { gap: 2px; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .card { transition: box-shadow 200ms ease; }
+  }
+</style>
+
+<div class="page">
+  <header class="masthead">
+    <div class="wordmark">Minutes <small>the statement the school never sends</small></div>
+    <div class="asof">Case <b>Maya R.</b> · as of <b>1 December 2026</b></div>
+  </header>
+
+  <div class="week">
+    <div class="eyebrow">This week's check</div>
+    <h1><span class="needs">2 decisions</span> need you.</h1>
+    <ul class="checked">
+      <li>No records request has been made on this case yet.</li>
+      <li>Reconciled 4 services against 44 records for 8 Sep – 1 Dec 2026: 5,010 minutes promised, 1,095 documented as delivered.</li>
+      <li>Read 6 dates the IEP sets: 0 coming up, 1 past.</li>
+    </ul>
+  </div>
+
+  <section>
+    <h2>Decisions</h2>
+    <p class="lede">Each one is a letter Minutes compiled from the IEP and your records. Nothing leaves until you say so, and you post it yourself, by a method that proves delivery.</p>
+
+    <div class="cards">
+
+      <article class="card" id="card-1">
+        <div class="card-head">
+          <h3>Progress report on all goals provided to parents — that date has passed</h3>
+          <span class="chip needs">Time-sensitive</span>
+        </div>
+        <p class="why">The IEP sets this for 6 November. That date was 25 days ago and your file holds no record that it happened. Asking in writing now both finds out and creates the dated record that you asked.</p>
+        <ul class="facts">
+          <li>The IEP dated 1 September 2026 records: "Progress report on all goals provided to parents", no later than 6 November 2026.</li>
+          <li>As of 1 December that date is 25 days in the past.</li>
+          <li>Your file records no evidence that this has been satisfied.</li>
+        </ul>
+        <p class="action"><b>Recommended:</b> write to the case manager naming the date and asking what is scheduled. Keep it short and keep the reply.</p>
+
+        <details class="letter" open>
+          <summary><span>The letter · Progress report on all goals provided to parents — Maya R., due 2026-11-06</span><span class="toggle"></span></summary>
+          <div class="paper">Date: 2026-12-01
+To: Case Manager and Director of Special Education
+Re: Progress report on all goals provided to parents — Maya R.
+
+I am the parent of Maya R. The IEP dated 2026-09-01 records the following: "Progress report on all goals provided to parents", no later than 2026-11-06.<span class="cite">[1]</span> As of the date of this letter that date is 25 days in the past. I am asking the district to confirm in writing whether this has taken place and, if it has not, on what date it will be scheduled.
+
+For reference, 34 CFR 300.320(a)(3) requires the IEP to state how progress toward the annual goals will be measured and when periodic reports will be provided; the schedule quoted above is the one this IEP sets.
+
+This letter states a date recorded in the IEP and asks what is scheduled. It does not assert that any requirement has been broken.
+
+Please reply in writing.
+
+Parent/guardian of Maya R.
+Signature: ______________________    Date: ______________</div>
+          <ol class="footnotes">
+            <li><span class="m">[1]</span><span class="prov">School record</span><span>IEP of 2026-09-01: "Progress reports on all goals will be provided to the parents at each grading period: November 6, 2026; January 29, 2027; April 9, 2027; and June 11, 2027."</span></li>
+          </ol>
+          <p class="basis"><b>Authorities cited:</b> 34 CFR 300.320(a)(3)(i)–(ii) · 20 U.S.C. 1414(d)(1)(A)(i)(III) · 34 CFR 300.324(b)(1)(ii)(A)</p>
+        </details>
+
+        <div class="decide">
+          <button class="primary" data-approve="1">Release to my outbox</button>
+          <button data-decline="1">Decline</button>
+          <span class="note">Releasing does not send. You post it.</span>
+        </div>
+        <div class="stamp" id="stamp-1"></div>
+      </article>
+
+      <article class="card" id="card-2">
+        <div class="card-head">
+          <h3>Time to ask the district for its service records</h3>
+          <span class="chip">Routine</span>
+        </div>
+        <p class="why">85 days of service have accrued since 8 September and none of it has been asked about yet, which is the cadence Minutes asks on. Asking on a schedule is what produces evidence rather than waiting for it: either the logs come back and your ledger gains the district's own confirmation, or they do not, and the district's silence past the response date becomes a dated fact you could not have created by watching.</p>
+        <ul class="facts">
+          <li>The request would cover 8 September through 1 December 2026 — 85 days not yet covered by any request.</li>
+          <li>Services asked about: Speech-Language Therapy, Occupational Therapy, Specialized Academic Instruction, Individual Counseling.</li>
+          <li>The district's own service logs are the strongest record of what was delivered, and they are the one record it controls.</li>
+        </ul>
+        <p class="action"><b>Recommended:</b> review the request and send it by a method that proves delivery — the response clock runs from receipt, so the delivery proof is what makes the deadline enforceable.</p>
+
+        <details class="letter">
+          <summary><span>The letter · Request to inspect and review education records — 2026-09-08 to 2026-12-01</span><span class="toggle"></span></summary>
+          <div class="paper">Date: 2026-12-01
+To: Records Custodian and Director of Special Education
+Re: Education records of Maya R., school year 2026–2027
+Request reference: req-001
+
+I am the parent of Maya R. Under 34 CFR 300.613(a) and 34 CFR 99.10(a) I am requesting to inspect and review, and to receive copies of, the education records described below covering 2026-09-08 through 2026-12-01.
+
+Services at issue:
+- The IEP dated 2026-09-01 provides Speech-Language Therapy at 30 minutes per session, 2 sessions per week, delivered by a Licensed Speech-Language Pathologist in the therapy room.<span class="cite">[1]</span>
+- The IEP dated 2026-09-01 provides Occupational Therapy at 45 minutes per session, 1 session per week, delivered by a Licensed Occupational Therapist in the OT room.<span class="cite">[2]</span>
+- The IEP dated 2026-09-01 provides Specialized Academic Instruction at 60 minutes per session, 1 session per day, delivered by an Education Specialist in the resource room.<span class="cite">[3]</span>
+- The IEP dated 2026-09-01 provides Individual Counseling at 30 minutes per session, 1 session per month, delivered by a School Psychologist in the counseling office.<span class="cite">[4]</span>
+
+Records requested. For each service listed above, and for the period stated above, all records documenting delivery of that service, including:
+- service logs, encounter logs, and session notes;
+- data sheets and progress-monitoring data;
+- attendance records for the service, and records of sessions canceled, rescheduled, shortened, or not provided as scheduled;
+- records of make-up sessions offered, scheduled, or held;
+- provider schedules and assignment records, including any period covered by a substitute or contracted provider;
+- communications concerning the scheduling or delivery of the service; and
+- all records submitted for Medicaid or other third-party billing for services to this child.
+
+This request reaches records held by any party acting for the district, including contracted and independent providers (34 CFR 300.611(b) and 34 CFR 300.611(c); 34 CFR 99.3). I also request the list of the types and locations of education records collected, maintained, or used by the agency (34 CFR 300.616), the record of parties who have obtained access to these records (34 CFR 300.614), and, for any coded entries in the logs, the explanations and interpretations provided for by 34 CFR 300.613(b) and 34 CFR 99.10(c).
+
+Timing. 34 CFR 300.613(a) provides that the agency must comply without unnecessary delay and before any meeting regarding an IEP, any hearing, or any resolution session, and in no case more than 45 days after the request is made. 34 CFR 99.10(b) sets a parallel ceiling of 45 days from receipt and requires compliance within a reasonable period of time. The IEP records the following date: "IEP team will reconvene for annual review", no later than 2027-09-01.<span class="cite">[5]</span> If a meeting regarding the IEP is scheduled before the 45-day ceiling expires, the earlier date is the one that governs production.
+
+Copies. I am asking for copies rather than an on-site appointment. 34 CFR 300.613(b) and 34 CFR 99.10(d) provide for copies, or other arrangements, where failure to provide them would effectively prevent the parent from exercising the right to inspect and review.
+<span class="fill">[PARENT: state here the circumstance that would prevent on-site inspection — for example work schedule, distance, childcare, disability, or the volume of records. Minutes does not supply this fact for you.]</span>
+
+Fees. 34 CFR 300.617 and 34 CFR 99.11 provide that no fee may be charged to search for or to retrieve records, and that a fee for copies is permitted only where it would not effectively prevent the parent from exercising the right to inspect and review.
+
+Preservation. 34 CFR 99.10(e) provides that an agency shall not destroy education records while a request to inspect and review them is outstanding. I ask that all records within the scope of this request be preserved, including records held by contracted providers.
+
+If any part of this request is declined, or if responsive records do not exist, please say so in writing and identify which records are withheld or absent and on what basis.
+
+Please reply in writing.
+
+Parent/guardian of Maya R.
+Signature: ______________________    Date: ______________</div>
+          <ol class="footnotes">
+            <li><span class="m">[1]</span><span class="prov">School record</span><span>IEP of 2026-09-01: Speech-Language Therapy, 30 minutes per session, 2 sessions per week, Licensed Speech-Language Pathologist, therapy room.</span></li>
+            <li><span class="m">[2]</span><span class="prov">School record</span><span>IEP of 2026-09-01: Occupational Therapy, 45 minutes per session, 1 session per week, Licensed Occupational Therapist, OT room.</span></li>
+            <li><span class="m">[3]</span><span class="prov">School record</span><span>IEP of 2026-09-01: Specialized Academic Instruction, 60 minutes daily, Education Specialist, resource room.</span></li>
+            <li><span class="m">[4]</span><span class="prov">School record</span><span>IEP of 2026-09-01: Individual Counseling, 30 minutes per session, 1 session per month, School Psychologist, counseling office.</span></li>
+            <li><span class="m">[5]</span><span class="prov">School record</span><span>IEP of 2026-09-01: "The IEP team will reconvene for the annual review no later than September 1, 2027."</span></li>
+          </ol>
+          <p class="basis"><b>Authorities cited:</b> 34 CFR 300.613(a) · 300.613(b)(1)–(3) · 300.611(b)–(c) · 300.614 · 300.616 · 300.617(a)–(b) · 300.501(a) · 34 CFR 99.3 · 99.10(a)–(e) · 99.11(a)–(b)</p>
+        </details>
+
+        <div class="decide">
+          <button class="primary" data-approve="2">Release to my outbox</button>
+          <button data-decline="2">Decline</button>
+          <span class="note">Releasing does not send. You post it.</span>
+        </div>
+        <div class="stamp" id="stamp-2"></div>
+      </article>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>This term so far</h2>
+    <p class="lede">Minutes checked every week. Fourteen of twenty-one weeks needed nothing from you; that silence is the product.</p>
+    <div class="strip" id="strip" aria-label="Twenty-one weekly checks from 8 September 2026 to 26 January 2027"></div>
+    <div class="strip-x"><span>8 Sep</span><span>1 Dec</span><span>26 Jan</span></div>
+    <div class="legend">
+      <span><i class="sw"></i>Nothing needed you</span>
+      <span><i class="sw decision"></i>A decision was put to you</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Statement · 8 September to 1 December 2026</h2>
+    <p class="headline-figure">3,870 minutes (64.5 hours) short this period — <span class="undoc-n">3,765 of it with no record either way.</span></p>
+    <p class="lede">5,010 minutes owed. 1,095 documented as delivered. 45 excluded as falling on a date a record notes your child was absent. Minutes with no record either way are a gap in the evidence, not a record of non-delivery; the answer to them is the records request above.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Service</th><th>Owed</th><th>Delivered</th><th>Excused</th><th>Short</th><th>of which<br>no record</th></tr></thead>
+        <tbody>
+          <tr><td>Specialized Academic Instruction</td><td>3,660<span class="hrs">61h</span></td><td>0</td><td>0</td><td>3,660<span class="hrs">61h</span></td><td class="undoc">3,660</td></tr>
+          <tr><td>Speech-Language Therapy</td><td>720<span class="hrs">12h</span></td><td>585<span class="hrs">9.8h</span></td><td>0</td><td>135</td><td class="undoc">75</td></tr>
+          <tr><td>Occupational Therapy</td><td>540<span class="hrs">9h</span></td><td>450<span class="hrs">7.5h</span></td><td>45</td><td>45</td><td>0</td></tr>
+          <tr><td>Individual Counseling</td><td>90</td><td>60</td><td>0</td><td>30</td><td class="undoc">30</td></tr>
+          <tr class="total"><td>Total</td><td>5,010<span class="hrs">83.5h</span></td><td>1,095<span class="hrs">18.3h</span></td><td>45</td><td>3,870<span class="hrs">64.5h</span></td><td class="undoc">3,765</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="legend">
+      <span><i class="sw hatch"></i>No record either way — nobody wrote anything down</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Dates the IEP sets</h2>
+    <ul class="rows">
+      <li><span class="d">6 Nov 2026</span><span>Progress report on all goals provided to parents</span><span class="state overdue">25 days past</span></li>
+      <li><span class="d">29 Jan 2027</span><span>Progress report on all goals provided to parents</span><span class="state">59 days</span></li>
+      <li><span class="d">9 Apr 2027</span><span>Progress report on all goals provided to parents</span><span class="state">129 days</span></li>
+      <li><span class="d">11 Jun 2027</span><span>Progress report on all goals provided to parents</span><span class="state">192 days</span></li>
+      <li><span class="d">1 Sep 2027</span><span>IEP team reconvenes for the annual review</span><span class="state">274 days</span></li>
+      <li><span class="d">14 Nov 2028</span><span>Triennial reevaluation of eligibility completed</span><span class="state">714 days</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>What Minutes did</h2>
+    <p class="lede">Every action, as it happened. The paper trail is the product.</p>
+    <ul class="rows audit" id="audit">
+      <li><span class="d">1 Dec 2026</span><span>Checked the records requests — none on file yet.<span class="who">caseworker</span></span></li>
+      <li><span class="d">1 Dec 2026</span><span>Reconciled 4 services against 44 records; 5,010 promised, 1,095 documented as delivered.<span class="who">caseworker</span></span></li>
+      <li><span class="d">1 Dec 2026</span><span>Read the 6 dates the IEP sets; 1 has passed with nothing on file.<span class="who">caseworker</span></span></li>
+      <li><span class="d">1 Dec 2026</span><span>Compiled two letters and put them to you. Nothing has left.<span class="who">caseworker</span></span></li>
+    </ul>
+  </section>
+
+  <footer>
+    <div>Prototype on the sample case. Every person, school and document here is fictional. Decisions on this page are recorded locally.</div>
+    <div>Minutes compiles documentation from the IEP and the family's own records. It is not a law firm, does not give legal advice, and never posts anything: an approved letter waits in your outbox for you to send by a method that proves delivery.</div>
+  </footer>
+</div>
+
+<script>
+  (function () {
+    // Twenty-one weekly checks, 8 Sep 2026 to 26 Jan 2027; decision weeks from the semester replay.
+    var decisionWeeks = { 5: 1, 7: 1, 9: 1, 12: 1, 18: 1, 19: 1, 20: 1 };
+    var strip = document.getElementById('strip');
+    var start = new Date(2026, 8, 8);
+    for (var i = 0; i < 21; i++) {
+      var d = new Date(start); d.setDate(start.getDate() + i * 7);
+      var el = document.createElement('div');
+      el.className = 'wk' + (decisionWeeks[i] ? ' decision' : '') + (i === 12 ? ' today' : '');
+      el.title = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + (decisionWeeks[i] ? ' — a decision was put to you' : ' — nothing needed you');
+      strip.appendChild(el);
+    }
+
+    var titles = {
+      1: 'Progress report on all goals provided to parents — Maya R., due 2026-11-06',
+      2: 'Request to inspect and review education records — Maya R., 2026-09-08 to 2026-12-01'
+    };
+    var h1 = document.querySelector('h1');
+    var open = 2;
+
+    function audit(text) {
+      var li = document.createElement('li');
+      li.innerHTML = '<span class="d">1 Dec 2026</span><span>' + text + '<span class="who">you</span></span>';
+      document.getElementById('audit').appendChild(li);
+    }
+    function settle(n, approved) {
+      var card = document.getElementById('card-' + n);
+      var stamp = document.getElementById('stamp-' + n);
+      card.classList.add('done');
+      if (approved) {
+        stamp.textContent = 'Released to your outbox. Post it by a method that proves delivery, then tell Minutes the date the district received it — that is the date the response clock runs from.';
+        audit('Approved “' + titles[n] + '”. Released to the outbox; not sent.');
+      } else {
+        stamp.classList.add('declined');
+        stamp.textContent = 'Declined. The letter is kept whole on the record, nothing has left, and Minutes will not ask again about this one.';
+        audit('Declined “' + titles[n] + '”. Kept on the record; nothing left.');
+      }
+      open -= 1;
+      h1.innerHTML = open > 0
+        ? '<span class="needs">' + open + ' decision' + (open === 1 ? '' : 's') + '</span> need' + (open === 1 ? 's' : '') + ' you.'
+        : 'Nothing needs you. Minutes checked.';
+    }
+    document.querySelectorAll('[data-approve]').forEach(function (b) {
+      b.addEventListener('click', function () { settle(b.getAttribute('data-approve'), true); });
+    });
+    document.querySelectorAll('[data-decline]').forEach(function (b) {
+      b.addEventListener('click', function () { settle(b.getAttribute('data-decline'), false); });
+    });
+  })();
+</script>
