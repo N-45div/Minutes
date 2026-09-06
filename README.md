@@ -143,12 +143,26 @@ python scripts/schedule_weekly.py --delete    # take it all back off the account
 
 Scheduler waits for the runtime's reply and gives up within seconds, while a wake that finds a decision calls a model. So a scheduled wake is sent with `"background": true`: the runtime acknowledges at once with the run's id, finishes the work in the background under AgentCore's async-task tracking, records any failure in the case's audit trail, and refuses a second wake for a case that is already in flight. `{"action": "status", "run_id": ...}` reports what a run did. A weekly firing costs nothing measurable.
 
+**Hosting the app.** The runtime accepts SigV4-signed calls and nothing else, so a browser cannot reach it and must never be handed credentials that could. `web/lambda_function.py` is the proxy in between, and `scripts/deploy_web.py` puts it on the account as one Lambda behind a Lambda Function URL. One URL is the whole application: the function serves `site/` itself (any path that is not an asset comes back as `index.html`, so the hash router works from a cold link) and forwards `POST /api` to the runtime under its own role — a role allowed to invoke exactly this runtime and write its own logs, and nothing else.
+
+```bash
+python scripts/deploy_web.py --dry-run     # every document and the zip's file list; no credentials, no calls
+python scripts/deploy_web.py               # create (or update) the role, the function and the URL
+python scripts/deploy_web.py --show        # the URL, the state, the last deploy, the bundle size
+python scripts/deploy_web.py --rotate-key  # update, with a new demo key
+python scripts/deploy_web.py --delete      # take the URL, the function and the role back off the account
+```
+
+The deploy prints two marked lines: `URL:` is the app, and `KEY:` is the demo key the screen sends in the `x-minutes-key` header — generated on the first deploy, kept across redeploys, printed there and nowhere else (`--show` says only whether one is set). Redeploying the screen is running the script again; it zips `site/` fresh each time.
+
+The caveat is the point: a demo key and an unguessable case id are the only things between the open internet and a case. That is appropriate for a demo of a synthetic child, and it is not appropriate for a real family's records — those want a real identity in front of the runtime, not a shared secret in a header.
+
 ## What Minutes is not
 
 - **Not a chatbot.** There is nothing to open and nothing to converse with. It works in the background and interrupts only for a decision.
 - **Not legal advice.** It compiles documentation from the IEP and the family's own records. What to do with that documentation is the parent's decision, with their advocate or attorney if they have one. Every compiled letter says so.
 - **Not a claim about any real school or child.** Every document in `fixtures/` is synthetic and marked as such.
-- **Not a mail client and not a scheduler.** It does not read your inbox and it cannot post anything. It compiles the letter, the parent sends it by a channel that proves delivery, and they tell Minutes the date it arrived — which is the date the law actually counts from. The weekly wake-up is a function something external calls; no scheduler ships in this repo.
+- **Not a mail client and not a scheduler.** It does not read your inbox and it cannot post anything. It compiles the letter, the parent sends it by a channel that proves delivery, and they tell Minutes the date it arrived — which is the date the law actually counts from. The weekly wake-up runs on an EventBridge schedule you create with one command (see *Running on a schedule*); Minutes never decides on its own to contact anyone.
 
 ## Sample case
 
