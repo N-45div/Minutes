@@ -226,7 +226,7 @@ def test_the_url_is_public_buffered_and_allows_exactly_the_two_headers_the_proxy
     assert plan.url_config["AuthType"] == "NONE"
     assert plan.url_config["InvokeMode"] == "BUFFERED"
     assert plan.url_config["Cors"]["AllowOrigins"] == ["*"]
-    assert set(plan.url_config["Cors"]["AllowMethods"]) == {"GET", "POST", "OPTIONS"}
+    assert set(plan.url_config["Cors"]["AllowMethods"]) == {"GET", "POST"}
     assert set(plan.url_config["Cors"]["AllowHeaders"]) == {"content-type", "x-minutes-key"}
 
 

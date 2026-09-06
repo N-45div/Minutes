@@ -89,7 +89,7 @@ EXAMPLE_ARN = "arn:aws:bedrock-agentcore:us-east-1:000000000000:runtime/minutes-
 # two headers the proxy reads and nothing more.
 CORS = {
     "AllowOrigins": ["*"],
-    "AllowMethods": ["GET", "POST", "OPTIONS"],
+    "AllowMethods": ["GET", "POST"],  # preflight is the service's; OPTIONS is not a member (6-char cap)
     "AllowHeaders": ["content-type", "x-minutes-key"],
     "MaxAge": 3600,
 }
