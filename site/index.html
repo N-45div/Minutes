@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Minutes</title>
+  <meta name="description" content="Schools send report cards about your child. Nobody sends a statement about the school. Minutes is that statement.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Public+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    // Theme before first paint, so a chosen theme never flashes the other one.
+    try { var t = localStorage.getItem('minutes.theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
+</head>
+<body>
+  <div class="page" id="app">
+    <!-- First paint, before app.js runs: the same masthead every route keeps. -->
+    <header class="masthead">
+      <a class="wordmark" href="#/">Minutes <small>the statement the school never sends</small></a>
+    </header>
+    <div class="week"><div class="eyebrow">Opening</div><p class="loading">Reading the case…<span class="bar"></span></p></div>
+  </div>
+
+  <div id="print-sheet" aria-hidden="true"></div>
+
+  <dialog class="settings" id="settings" aria-labelledby="settings-title">
+    <form method="dialog" id="settings-form">
+      <h2 id="settings-title">Where Minutes runs</h2>
+      <label class="field"><span>API base</span>
+        <input name="apiBase" id="s-api" placeholder="/api" autocomplete="off" spellcheck="false">
+        <span class="hint">Default <code>/api</code>, the proxy on this origin. For local development use <code>http://127.0.0.1:8080/invocations</code> through <code>scripts/dev_web.py</code> — the runtime's own server sets no CORS headers, so the browser cannot reach it directly.</span>
+      </label>
+      <label class="field"><span>Key</span>
+        <input name="key" id="s-key" placeholder="paste the key from your link" autocomplete="off" spellcheck="false">
+        <span class="hint">Sent as <code>x-minutes-key</code>. Kept in this tab's session only; the local runtime needs none.</span>
+      </label>
+      <label class="field"><span>Theme</span>
+        <select name="theme" id="s-theme">
+          <option value="system">Follow the system</option>
+          <option value="light">Paper</option>
+          <option value="dark">Dark</option>
+        </select>
+      </label>
+      <div class="formfoot">
+        <button type="submit" class="primary" value="save">Keep these</button>
+        <button type="submit" value="cancel">Cancel</button>
+        <span class="note small" id="s-note"></span>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
