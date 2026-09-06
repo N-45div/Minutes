@@ -230,14 +230,26 @@ def test_the_url_is_public_buffered_and_allows_exactly_the_two_headers_the_proxy
     assert set(plan.url_config["Cors"]["AllowHeaders"]) == {"content-type", "x-minutes-key"}
 
 
-def test_the_public_permission_is_scoped_to_the_url_with_auth_none(plan):
-    assert plan.url_permission == {
-        "FunctionName": "minutes-web",
-        "StatementId": "AllowPublicFunctionUrl",
-        "Action": "lambda:InvokeFunctionUrl",
-        "Principal": "*",
-        "FunctionUrlAuthType": "NONE",
-    }
+def test_the_public_permission_is_two_statements_scoped_to_the_url(plan):
+    """Since October 2025 a public function URL needs InvokeFunctionUrl AND
+    InvokeFunction; with only the first, every request gets the service's 403
+    and the function never runs. The second is scoped to the URL alone."""
+    assert plan.url_permissions == [
+        {
+            "FunctionName": "minutes-web",
+            "StatementId": "AllowPublicFunctionUrl",
+            "Action": "lambda:InvokeFunctionUrl",
+            "Principal": "*",
+            "FunctionUrlAuthType": "NONE",
+        },
+        {
+            "FunctionName": "minutes-web",
+            "StatementId": "AllowPublicFunctionUrlInvoke",
+            "Action": "lambda:InvokeFunction",
+            "Principal": "*",
+            "InvokedViaFunctionUrl": True,
+        },
+    ]
 
 
 def test_the_key_is_unguessable_and_url_safe():
@@ -403,6 +415,7 @@ def test_create_makes_the_role_then_the_function_then_the_url_then_the_permissio
         "get_function_configuration",
         "create_function_url_config",
         "add_permission",
+        "add_permission",
     ]
     assert json.loads(iam.kwargs("create_role")["AssumeRolePolicyDocument"]) == plan.trust_policy
     assert json.loads(iam.kwargs("put_role_policy")["PolicyDocument"]) == plan.permission_policy
@@ -413,7 +426,7 @@ def test_create_makes_the_role_then_the_function_then_the_url_then_the_permissio
     assert created["Environment"]["Variables"]["MINUTES_DEMO_KEY"] == "fresh-key"
     assert created["Environment"]["Variables"]["MINUTES_RUNTIME_ARN"] == RUNTIME
     assert lam.kwargs("create_function_url_config") == plan.url_config
-    assert lam.kwargs("add_permission") == plan.url_permission
+    assert [k for n, k in lam.calls if n == "add_permission"] == plan.url_permissions
     assert url == "https://abc.lambda-url.us-east-1.on.aws/"
     assert "URL:  https://abc.lambda-url.us-east-1.on.aws/" in lines
     assert any(line.startswith("KEY:  fresh-key") for line in lines)
@@ -448,6 +461,7 @@ def test_running_create_twice_converges_and_keeps_the_key(plan, bundle):
         "get_function_configuration",
         "create_function_url_config",
         "update_function_url_config",
+        "add_permission",
         "add_permission",
     ]
     assert lam.kwargs("update_function_configuration")["Environment"]["Variables"]["MINUTES_DEMO_KEY"] == "old-key"
@@ -563,11 +577,16 @@ def test_delete_takes_back_the_url_the_permission_the_function_and_the_role_in_t
 
     web.delete(plan, iam=iam, lam=lam, log=lambda _: None)
 
-    assert lam.names == ["delete_function_url_config", "remove_permission", "delete_function"]
-    assert lam.kwargs("remove_permission") == {
-        "FunctionName": "minutes-web",
-        "StatementId": "AllowPublicFunctionUrl",
-    }
+    assert lam.names == [
+        "delete_function_url_config",
+        "remove_permission",
+        "remove_permission",
+        "delete_function",
+    ]
+    assert [k for n, k in lam.calls if n == "remove_permission"] == [
+        {"FunctionName": "minutes-web", "StatementId": "AllowPublicFunctionUrlInvoke"},
+        {"FunctionName": "minutes-web", "StatementId": "AllowPublicFunctionUrl"},
+    ]
     assert lam.kwargs("delete_function") == {"FunctionName": "minutes-web"}
     assert iam.names == ["delete_role_policy", "delete_role"]
     assert iam.kwargs("delete_role_policy")["PolicyName"] == "MinutesWebProxy"

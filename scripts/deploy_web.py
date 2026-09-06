@@ -72,6 +72,7 @@ RUNTIME = "python3.12"
 MEMORY_MB = 512
 TIMEOUT_SECONDS = 60  # a wake that compiles a letter calls a model; the runtime can take a while
 URL_STATEMENT_ID = "AllowPublicFunctionUrl"
+URL_INVOKE_STATEMENT_ID = "AllowPublicFunctionUrlInvoke"
 KEY_BYTES = 24
 
 # What the function reads; the same names web/lambda_function.py reads them by.
@@ -138,7 +139,7 @@ class Plan(NamedTuple):
     permission_policy: dict[str, Any]
     function_config: dict[str, Any]
     url_config: dict[str, Any]
-    url_permission: dict[str, Any]
+    url_permissions: list[dict[str, Any]]
 
 
 def runtime_arn(target: str = "default", name: str = "minutes") -> str:
@@ -275,13 +276,27 @@ def build_plan(
         "InvokeMode": "BUFFERED",
         "Cors": dict(CORS),
     }
-    url_permission: dict[str, Any] = {
-        "FunctionName": name,
-        "StatementId": URL_STATEMENT_ID,
-        "Action": "lambda:InvokeFunctionUrl",
-        "Principal": "*",
-        "FunctionUrlAuthType": "NONE",
-    }
+    # Two statements, not one. Since October 2025 a public function URL needs
+    # both lambda:InvokeFunctionUrl and lambda:InvokeFunction; with only the
+    # first, the URL answers every request — signed or not — with the
+    # service's own 403, and nothing in the function ever runs. The second is
+    # scoped with InvokedViaFunctionUrl so it opens the URL and nothing else.
+    url_permissions: list[dict[str, Any]] = [
+        {
+            "FunctionName": name,
+            "StatementId": URL_STATEMENT_ID,
+            "Action": "lambda:InvokeFunctionUrl",
+            "Principal": "*",
+            "FunctionUrlAuthType": "NONE",
+        },
+        {
+            "FunctionName": name,
+            "StatementId": URL_INVOKE_STATEMENT_ID,
+            "Action": "lambda:InvokeFunction",
+            "Principal": "*",
+            "InvokedViaFunctionUrl": True,
+        },
+    ]
     return Plan(
         name=name,
         role_name=role_name,
@@ -298,7 +313,7 @@ def build_plan(
         permission_policy=permission_policy(runtime, log_group_arn),
         function_config=function_config,
         url_config=url_config,
-        url_permission=url_permission,
+        url_permissions=url_permissions,
     )
 
 
@@ -360,7 +375,8 @@ def dry_run(plan: Plan, *, log: Callable[[str], None] = print) -> None:
     log(json.dumps(plan.url_config, indent=2))
     log("")
     log("# lambda add-permission")
-    log(json.dumps(plan.url_permission, indent=2))
+    for permission in plan.url_permissions:
+        log(json.dumps(permission, indent=2))
     log("")
     log(f"# bundle: {len(files)} files, {len(bundle)} bytes zipped")
     for arcname, path in files:
@@ -489,11 +505,12 @@ def create(
         log("function URL kept, configuration updated")
     url = str(made.get("FunctionUrl") or "")
 
-    try:
-        lam.add_permission(**plan.url_permission)
-        log(f"public invoke permission added: {URL_STATEMENT_ID}")
-    except lam.exceptions.ResourceConflictException:
-        log(f"public invoke permission already there: {URL_STATEMENT_ID}")
+    for permission in plan.url_permissions:
+        try:
+            lam.add_permission(**permission)
+            log(f"public invoke permission added: {permission['StatementId']}")
+        except lam.exceptions.ResourceConflictException:
+            log(f"public invoke permission already there: {permission['StatementId']}")
 
     log("")
     log(f"URL:  {url}")
@@ -509,11 +526,12 @@ def delete(plan: Plan, *, iam: Any, lam: Any, log: Callable[[str], None] = print
         log("function URL deleted")
     except lam.exceptions.ResourceNotFoundException:
         log(f"no function URL on {plan.name}")
-    try:
-        lam.remove_permission(FunctionName=plan.name, StatementId=URL_STATEMENT_ID)
-        log(f"public invoke permission removed: {URL_STATEMENT_ID}")
-    except lam.exceptions.ResourceNotFoundException:
-        log(f"no permission {URL_STATEMENT_ID} on {plan.name}")
+    for statement_id in (URL_INVOKE_STATEMENT_ID, URL_STATEMENT_ID):
+        try:
+            lam.remove_permission(FunctionName=plan.name, StatementId=statement_id)
+            log(f"public invoke permission removed: {statement_id}")
+        except lam.exceptions.ResourceNotFoundException:
+            log(f"no permission {statement_id} on {plan.name}")
     try:
         lam.delete_function(FunctionName=plan.name)
         log(f"function deleted: {plan.name}")
