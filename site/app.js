@@ -657,9 +657,26 @@
       }
       setMain(waiting);
       bindAsOf(id);
-      var payload = { action: 'wake', case_id: id };
-      if (on) payload.today = on; // omitted otherwise, so the runtime uses the real date
-      call(payload).then(function (res) {
+      // First: is a letter from an earlier check still waiting? The runtime keeps
+      // that on the case (action `pending`), so a fresh tab or another device
+      // sees it without waking, and without the runtime suppressing the card
+      // as one it already raised.
+      call({ action: 'pending', case_id: id }).catch(function () { return null; }).then(function (pend) {
+        if (!guard()) return;
+        var open = pend && pend.status === 'awaiting_approval' ? (pend.interrupts || []) : [];
+        if (open.length && !force) {
+          renderWeek(id, {
+            today: on || null,
+            headline: open.length + (open.length === 1 ? ' decision needs you.' : ' decisions need you.'),
+            checked: ['A letter Minutes compiled at an earlier check is still waiting for your answer.'],
+            new_cards: [],
+            approval: { status: 'awaiting_approval', interrupts: open }
+          });
+          return;
+        }
+        var payload = { action: 'wake', case_id: id };
+        if (on) payload.today = on; // omitted otherwise, so the runtime uses the real date
+        return call(payload).then(function (res) {
         if (!guard()) return;
         if (res.status === 'error') { setMain(asOfControls(id) + '<div class="week"><div class="eyebrow">This week’s check</div>' + errorHtml(errorFrom(res, 'wake')) + '</div>'); bindAsOf(id); return; }
         if (res.status === 'accepted') {
@@ -668,13 +685,14 @@
         }
         if (res.period && res.period[0]) saveCtx(id, { ledgerStart: res.period[0] });
         renderWeek(id, res);
+        });
       }).catch(function (err) { if (guard()) { setMain(asOfControls(id) + '<div class="week"><div class="eyebrow">This week’s check</div>' + errorHtml(err) + '</div>'); bindAsOf(id); } });
     });
   }
 
-  // The runtime does not re-surface an approval that is still waiting: a later
-  // wake suppresses the cards it already raised, and no action lists pending
-  // interrupts. So what this tab was shown is kept until it is answered.
+  // The runtime lists a waiting approval (action `pending`), so a fresh tab can
+  // see it. What this tab was shown is also kept locally until it is answered,
+  // so a page reload mid-decision costs nothing.
   function pendingKey(id) { return 'minutes.pending.' + id; }
   function readPending(id) { try { return JSON.parse(store.get(pendingKey(id)) || 'null'); } catch (e) { return null; } }
   function writePending(state) {

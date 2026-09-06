@@ -486,6 +486,33 @@ def _join_background(timeout: float = 30.0) -> None:
         thread.join(timeout)
 
 
+def _pending(worker: Caseworker) -> dict:
+    """The approvals still waiting on the parent, read off the agent's own interrupt state.
+
+    A wake that already raised a card will not raise it again, so a parent who
+    opens the case in a fresh tab — or a fresh microVM — days later has no way
+    to see a letter that is still waiting unless something reads the SDK's
+    record of it. That record is the same one the send gate reads; nothing here
+    consults the model or the tools, and an answered interrupt is not pending.
+    """
+    state = getattr(worker.agent, "_interrupt_state", None)
+    waiting = [
+        interrupt.to_dict()
+        for interrupt in (getattr(state, "interrupts", None) or {}).values()
+        if getattr(interrupt, "response", None) is None
+    ]
+    if waiting:
+        return {
+            "status": "awaiting_approval",
+            "interrupts": waiting,
+            "how_to_answer": (
+                "POST {action: 'answer', answers: {<interrupt id>: 'approve' | 'decline'}}. "
+                "Anything other than an explicit approval is a decline."
+            ),
+        }
+    return {"status": "done", "interrupts": []}
+
+
 def _statement(payload: dict) -> dict:
     today = _day(payload, "today", date.today())
     rendered = build_monthly_statement(
@@ -872,6 +899,8 @@ def invoke(payload: dict, context) -> dict:
             return _result(worker, worker.ask(str(prompt)))
         if action == "answer":
             return _answer(worker, payload)
+        if action == "pending":
+            return _pending(worker)
         if action == "outbox":
             return {"status": "done", "outbox": worker.outbox()}
         if action == "declined":

@@ -576,3 +576,32 @@ def test_the_background_flag_is_explicit_and_off_by_default(monkeypatch):
         out = _invoke(payload, session_id="e" * 40)
         assert out == {"status": "done", "ran": True}
     assert app._runs == {}
+
+
+# ---------------------------------------------------------------------------
+# pending: a fresh tab can see a letter still waiting.
+# ---------------------------------------------------------------------------
+
+
+def test_pending_is_empty_when_nothing_waits():
+    out = _invoke({"action": "pending", "case_id": "maya-demo"}, session_id="p" * 40)
+    assert out == {"status": "done", "interrupts": []}
+
+
+def test_pending_lists_only_the_unanswered_interrupts():
+    from strands.interrupt import Interrupt
+
+    worker = app._caseworker("maya-demo")
+    state = worker.agent._interrupt_state
+    waiting = Interrupt(id="v1:tool_call:t1:aaa", name="send-records-request:abc123", reason={"question": "Release?"})
+    answered = Interrupt(id="v1:tool_call:t1:bbb", name="send-letter:def456", reason={"question": "Release?"})
+    answered.response = "decline"
+    state.interrupts = {waiting.id: waiting, answered.id: answered}
+    state.activated = True
+
+    out = _invoke({"action": "pending", "case_id": "maya-demo"}, session_id="p" * 40)
+
+    assert out["status"] == "awaiting_approval"
+    assert [i["id"] for i in out["interrupts"]] == [waiting.id]
+    assert out["interrupts"][0]["name"] == "send-records-request:abc123"
+    assert "answer" in out["how_to_answer"]
