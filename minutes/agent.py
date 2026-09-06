@@ -175,6 +175,7 @@ __all__ = [
     "outbox",
     "read_answer",
     "record_action",
+    "record_delivery",
     "record_parent_decline",
     "record_request_delivery",
     "send_letter",
@@ -1444,8 +1445,24 @@ def record_request_delivery(
         received_on: The date the district received it, ISO format, as the
             parent's delivery proof states it.
     """
-    received = _parse_date(received_on, "received_on")
-    agent = tool_context.agent
+    return record_delivery(tool_context.agent, request_id, _parse_date(received_on, "received_on"))
+
+
+def record_delivery(agent: Agent, request_id: str, received: date) -> dict:
+    """The state transition behind :func:`record_request_delivery`, as a plain function.
+
+    One body, two callers. The caseworker's tool calls this with a date the
+    model relayed from the parent; the runtime's ``mark_received`` action calls
+    it with a date the parent typed into the application. The rules are the
+    same rules either way and they live here so they cannot drift: a request
+    must have been released to the parent before it can have been received,
+    and a district cannot receive a letter before it existed.
+
+    Returns the tool's own receipt dict (``recorded`` True or, for a request
+    whose clock is already running, False with a note) and raises
+    ``ValueError`` for the two refusals, because a refusal is something both
+    callers need to be able to show the parent verbatim.
+    """
     case = load_case_record()
     known = case_requests(agent, case)
 

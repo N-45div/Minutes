@@ -55,7 +55,8 @@ from typing import Any, Callable
 from strands import ToolContext, tool
 from strands.interrupt import InterruptException
 
-from .correspondence import load_cached_events, load_correspondence
+from .cases import case_store, current_case_id, is_sample, validate_case_id
+from .correspondence import attributed, load_cached_events, load_correspondence
 from .deadlines import evaluate_deadlines, next_action_date, urgency_for
 from .decisions import REQUEST_CADENCE_DAYS, capped_urgency, decisions_for, is_quiet
 from .discovery import RESPONSE_WINDOW_DAYS, due_requests, refresh_states
@@ -103,8 +104,9 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 LEDGER_FIXTURE = "iep_maya"
 CORRESPONDENCE_FIXTURE = "maya_fall_2026"
 
-# Every tool in this module reports one case. A multi-case deployment gives
-# load_case_record a case id and threads it through; nothing else changes.
+# The fixture case's own name. Every tool in this module reports one case:
+# the one named by minutes.cases.current_case_id for this invocation, or this
+# one when nothing named a case -- which is a test, a script, or the demo.
 DEFAULT_CASE = "maya"
 
 _OUTSTANDING_STATES = frozenset({RequestState.SENT, RequestState.UNANSWERED_OVERDUE})
@@ -158,7 +160,12 @@ class CaseRecord:
 
 @functools.lru_cache(maxsize=4)
 def _read_case(case_id: str) -> CaseRecord:
-    """Parse the case once. Callers get a copy, never this object."""
+    """Parse the fixture case once. Callers get a copy, never this object.
+
+    Only the sample lives here. A stored case goes through
+    :func:`_read_stored_case`, which is deliberately NOT cached: a note a
+    parent added a second ago must be in the record the next call reads.
+    """
     if case_id != DEFAULT_CASE:
         raise ValueError(
             f"unknown case {case_id!r}; this build ships the single demo case {DEFAULT_CASE!r}"
@@ -183,17 +190,51 @@ def _read_case(case_id: str) -> CaseRecord:
     )
 
 
-def load_case_record(case_id: str = DEFAULT_CASE) -> CaseRecord:
+def _read_stored_case(case_id: str) -> CaseRecord:
+    """A parent's own case, read fresh from the case store on every call.
+
+    Built exactly the way the fixture record is built: the events are stamped
+    with :func:`~minutes.correspondence.attributed` against the correspondence
+    they came from, so a non-delivery whose own note says the child was away is
+    excused here and nowhere else. The request history is empty for the same
+    reason it is empty for the fixture -- what this agent has sent lives in the
+    caseworker's session and :func:`case_requests` merges it in.
+    """
+    store = case_store()
+    ledger = store.read_ledger(case_id)
+    if ledger is None:
+        raise ValueError(
+            f"unknown case {case_id!r}; no IEP has been ingested for it (ingest_iep creates a case)"
+        )
+    items = store.read_correspondence(case_id)
+    return CaseRecord(
+        case_id=case_id,
+        ledger=ledger,
+        events=attributed(store.read_events(case_id), items),
+        requests=[],
+        correspondence_items=len(items),
+    )
+
+
+def load_case_record(case_id: str | None = None) -> CaseRecord:
     """Read one case. THE SWAP POINT for a real data source.
 
-    Today this parses the committed synthetic fixtures under ``fixtures/``.
-    Point it at a database, a parent's uploaded IEP, or a per-tenant store and
-    every tool in this module follows, because none of them touches a file.
+    ``case_id`` is the case to read; ``None`` means the case this invocation is
+    about (:data:`minutes.cases.current_case_id`, set by the runtime entrypoint
+    for the whole request), and when nothing named one, the committed sample.
+    Every tool in this module calls this with no argument, which is what makes
+    a parent's case reach every tool without any tool knowing it.
 
-    The parsed record is cached and handed out as a deep copy, so a caller that
-    mutates what it gets back cannot corrupt the case for the next tool call.
+    The sample is parsed once from the committed synthetic fixtures under
+    ``fixtures/`` and handed out as a deep copy, so a caller that mutates what
+    it gets back cannot corrupt the case for the next tool call. A stored case
+    is read fresh each time and needs no copy.
     """
-    return copy.deepcopy(_read_case(case_id))
+    if case_id is None:
+        case_id = current_case_id.get() or DEFAULT_CASE
+    if is_sample(case_id):
+        return copy.deepcopy(_read_case(DEFAULT_CASE))
+    return _read_stored_case(validate_case_id(case_id))
 
 
 # ---------------------------------------------------------------------------

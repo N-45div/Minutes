@@ -13,6 +13,9 @@ from types import SimpleNamespace
 import pytest
 
 import app
+from minutes import cases
+from minutes.correspondence import load_cached_events, load_correspondence
+from minutes.tools import CORRESPONDENCE_FIXTURE, load_case_record
 
 TERM_START = "2026-09-08"
 TERM_END = "2027-01-29"
@@ -23,11 +26,28 @@ def _invoke(payload: dict, session_id: str | None = None) -> dict:
     return app.invoke(payload, context)
 
 
+def _stored_copy_of_the_sample(case_id: str) -> str:
+    """Write the sample case into the store under another id.
+
+    The caseworker is keyed by case, so two tests that need two caseworkers in
+    one process need two cases. A copy of the sample is one that behaves
+    exactly like it.
+    """
+    store = cases.case_store()
+    store.write_ledger(case_id, load_case_record().ledger)
+    store.append_correspondence(case_id, load_correspondence(CORRESPONDENCE_FIXTURE))
+    store.append_events(case_id, load_cached_events(CORRESPONDENCE_FIXTURE))
+    return case_id
+
+
 @pytest.fixture(autouse=True)
 def _isolated_state(tmp_path, monkeypatch):
-    """Every test gets its own session store, caseworker cache and run ledger."""
+    """Every test gets its own session store, case store, caseworker cache and run ledger."""
     monkeypatch.setattr(app, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(app, "STATE_BUCKET", None)
+    monkeypatch.setattr(cases, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(cases, "STATE_BUCKET", None)
+    monkeypatch.setattr(cases, "_s3_stores", {})
     monkeypatch.setattr(app, "_caseworkers", {})
     monkeypatch.setattr(app, "_runs", {})
     monkeypatch.setattr(app, "_run_threads", {})
@@ -112,13 +132,13 @@ def test_an_unknown_action_lists_the_real_ones():
 
 def test_an_answer_without_answers_is_refused_before_any_agent_is_built(monkeypatch):
     built = []
-    monkeypatch.setattr(app, "_caseworker", lambda session_id: built.append(session_id) or None)
+    monkeypatch.setattr(app, "_caseworker", lambda case_id: built.append(case_id) or None)
 
     out = _invoke({"action": "answer"}, session_id="t" * 40)
 
     assert out["status"] == "error"
     assert "'answers' must map" in out["error"]
-    assert built == ["t" * 40], "the session is resolved first, but no agent call happens"
+    assert built == [app.DEFAULT_CASE_ID], "the case is resolved first, but no agent call happens"
 
 
 def test_a_session_id_is_minted_when_the_runtime_gives_none():
@@ -137,10 +157,19 @@ def test_a_second_wake_in_the_same_session_suppresses_what_the_first_raised():
     assert again["suppressed"] == 2
 
 
-def test_wakes_in_different_sessions_do_not_share_what_was_raised():
-    _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False}, session_id="x" * 40)
-    other = _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False}, session_id="y" * 40)
+def test_wakes_on_different_cases_do_not_share_what_was_raised():
+    first = _stored_copy_of_the_sample("family-one")
+    second = _stored_copy_of_the_sample("family-two")
+    _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False, "case_id": first})
+    other = _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False, "case_id": second})
     assert len(other["new_cards"]) == 2 and other["suppressed"] == 0
+
+
+def test_wakes_on_the_same_case_from_different_runtime_sessions_share_one_caseworker():
+    """The case is the unit: the microVM that serves a wake is incidental."""
+    _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False}, session_id="x" * 40)
+    again = _invoke({"action": "wake", "today": "2026-12-02", "ask_parent": False}, session_id="y" * 40)
+    assert again["new_cards"] == [] and again["suppressed"] == 2
 
 
 def test_what_a_wake_raised_survives_a_fresh_process(monkeypatch):
@@ -152,15 +181,19 @@ def test_what_a_wake_raised_survives_a_fresh_process(monkeypatch):
     assert again["new_cards"] == [] and again["suppressed"] == 2
 
 
-def test_without_a_bucket_the_case_is_keyed_by_the_runtime_session():
-    assert app._case_key("s" * 40, {"case_id": "ignored"}) == "s" * 40
-
-
-def test_with_a_bucket_the_case_is_keyed_by_the_case_not_the_microvm(monkeypatch):
+def test_the_caseworker_is_keyed_by_the_case_with_or_without_a_bucket(monkeypatch):
+    assert app._case_key({"case_id": "case-4242"}) == "case-4242"
+    assert app._case_key({}) == app.DEFAULT_CASE_ID
     monkeypatch.setattr(app, "STATE_BUCKET", "a-bucket")
-    assert app._case_key("s" * 40, {"case_id": "case-42"}) == "case-42"
-    assert app._case_key("t" * 40, {"case_id": "case-42"}) == "case-42", "a different microVM, the same case"
-    assert app._case_key("u" * 40, {}) == app.DEFAULT_CASE_ID
+    assert app._case_key({"case_id": "case-4242"}) == "case-4242", "a different microVM, the same case"
+    assert app._case_key({}) == app.DEFAULT_CASE_ID
+
+
+@pytest.mark.parametrize("bad", ["short", "has space-in-it", "-leading-dash", "x" * 65, 42])
+def test_a_malformed_case_id_is_refused_before_anything_is_built(bad, monkeypatch):
+    monkeypatch.setattr(app, "_caseworker", lambda case_id: pytest.fail("an agent was built"))
+    out = _invoke({"action": "case", "case_id": bad})
+    assert out["status"] == "error" and "case_id" in out["error"]
 
 
 def test_with_a_bucket_the_caseworker_keeps_its_case_in_s3(monkeypatch):
@@ -182,11 +215,11 @@ def test_with_a_bucket_the_caseworker_keeps_its_case_in_s3(monkeypatch):
     monkeypatch.setattr(app, "STATE_BUCKET", "a-bucket")
     monkeypatch.setattr(app, "STATE_PREFIX", "cases/")
 
-    worker = app._caseworker("case-42")
+    worker = app._caseworker("case-4242")
 
     assert isinstance(worker.session, RecordingS3SessionManager)
     assert built == {
-        "session_id": "case-42",
+        "session_id": "case-4242",
         "bucket": "a-bucket",
         "prefix": "cases/",
         "region_name": app.BEDROCK_REGION if hasattr(app, "BEDROCK_REGION") else built["region_name"],
@@ -212,7 +245,7 @@ def _recording_ask(worker, result):
 
 
 def test_a_quiet_wake_never_runs_the_model():
-    worker = app._caseworker("q" * 40)
+    worker = app._caseworker(app.DEFAULT_CASE_ID)
     calls = _recording_ask(worker, SimpleNamespace(stop_reason="end_turn", interrupts=None))
 
     out = _invoke({"action": "wake", "today": "2026-09-01"}, session_id="q" * 40)
@@ -222,7 +255,7 @@ def test_a_quiet_wake_never_runs_the_model():
 
 
 def test_a_wake_that_finds_letters_names_each_tool_call_and_reports_the_interrupt():
-    worker = app._caseworker("l" * 40)
+    worker = app._caseworker(app.DEFAULT_CASE_ID)
     pending = SimpleNamespace(id="v1:tool_call:abc:def", name="send-records-request:28c3", reason={"question": "?"})
     pending.to_dict = lambda: {"id": pending.id, "name": pending.name, "reason": pending.reason}
     calls = _recording_ask(worker, SimpleNamespace(stop_reason="interrupt", interrupts=[pending]))
@@ -242,7 +275,7 @@ def test_a_wake_that_finds_letters_names_each_tool_call_and_reports_the_interrup
 
 
 def test_a_wake_can_be_told_not_to_ask():
-    worker = app._caseworker("n" * 40)
+    worker = app._caseworker(app.DEFAULT_CASE_ID)
     calls = _recording_ask(worker, SimpleNamespace(stop_reason="end_turn", interrupts=None))
 
     out = _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False}, session_id="n" * 40)
@@ -319,7 +352,7 @@ def test_a_background_wake_is_acknowledged_while_the_work_is_still_running(monke
     )
 
     assert out["status"] == "accepted"
-    assert out["run_id"] and out["case"] == "b" * 40
+    assert out["run_id"] and out["case"] == app.DEFAULT_CASE_ID
     assert held.entered.wait(5), "the work started"
     assert not held.release.is_set(), "and the caller already has its answer"
 
@@ -400,9 +433,11 @@ def test_a_second_wake_for_a_case_already_working_is_refused(monkeypatch):
 def test_the_background_path_runs_exactly_the_wake_the_synchronous_path_runs():
     """No second implementation: the same ``_wake``, only nobody waits for it."""
     payload = {"action": "wake", "today": "2026-12-01", "ask_parent": False}
+    _stored_copy_of_the_sample("family-direct")
+    _stored_copy_of_the_sample("family-background")
 
-    direct = _invoke(dict(payload), session_id="d" * 40)
-    ack = _invoke({**payload, "background": True}, session_id="g" * 40)
+    direct = _invoke({**payload, "case_id": "family-direct"})
+    ack = _invoke({**payload, "case_id": "family-background", "background": True})
     app._join_background()
 
     assert direct["status"] == "done" and len(direct["new_cards"]) == 2
@@ -492,7 +527,7 @@ def test_the_status_action_reports_the_run_and_the_task_behind_it(monkeypatch):
     running = _invoke({"action": "status", "run_id": "exec-1"})
 
     assert running["status"] == "done"
-    assert running["run"]["status"] == "running" and running["run"]["case"] == session
+    assert running["run"]["status"] == "running" and running["run"]["case"] == app.DEFAULT_CASE_ID
     assert running["runs"] == {"exec-1": "running"}
     assert running["tasks"]["active_count"] == 1
 

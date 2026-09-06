@@ -43,12 +43,32 @@ the parent's decisions back by id and resumes. Nothing is released without an
 answer that positively reads as approval, and that rule lives in
 :mod:`minutes.agent`, not here — this file cannot weaken it.
 
-One caseworker is kept per case. When ``MINUTES_SESSION_BUCKET`` is set the
-case lives in S3 and the caseworker is keyed by ``case_id`` — the microVM that
-happens to serve an invocation is incidental, and two invocations weeks apart
-on machines that never met open the same case. That is what lets a parent be
-asked on Monday and answer on Thursday. Without a bucket (a laptop, a test) the
-case is keyed by the runtime session id and kept in a directory.
+One caseworker is kept per case, and the case is the unit of everything.
+Every payload may carry a ``case_id``; one that carries none is about the
+read-only sample case. The id is set on :data:`minutes.cases.current_case_id`
+for the whole invocation, which is how every tool in the engine reads the
+right family's file without being told, and the caseworker is keyed by it —
+the microVM that happens to serve an invocation is incidental, and two
+invocations weeks apart on machines that never met open the same case. That is
+what lets a parent be asked on Monday and answer on Thursday. With
+``MINUTES_SESSION_BUCKET`` set the case lives in S3; without it (a laptop, a
+test) it lives in a directory. The runtime session id appears only in error
+responses, so a caller can find the invocation in the logs.
+
+The remaining actions are how a parent runs THEIR case rather than the sample:
+
+    {"action": "case", "case_id": ...}                     the ledger and the counts
+    {"action": "ingest_iep", "case_id": ..., "text": ...}  one model call, creates the case
+    {"action": "add_note", ...}                            a dated parent observation, no model
+    {"action": "add_correspondence", ...}                  a pasted school item, classified
+    {"action": "list_evidence"} / {"action": "deadlines"}  the record, newest first
+    {"action": "mark_received", "request_id": ..., "received_on": ...}
+
+``add_note`` and ``mark_received`` are deterministic. ``ingest_iep`` and
+``add_correspondence`` are the only two actions here that run a model, and
+neither lets it decide a figure: extraction is structured output over the IEP
+the parent pasted, and classification is the same voted, grounded reading the
+fixture evidence went through.
 """
 
 from __future__ import annotations
@@ -64,10 +84,38 @@ from typing import Any
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 
-from minutes.agent import Caseworker, build_caseworker, record_action
+from minutes.agent import Caseworker, build_caseworker, record_action, record_delivery
+from minutes.cases import (
+    DEFAULT_CASE_ID,
+    case_store,
+    is_sample,
+    reset_current_case,
+    set_current_case,
+    validate_case_id,
+)
+from minutes.correspondence import attributed, classify_to_events, load_correspondence
 from minutes.cycle import CycleOutcome, RaisedCard, run_cycle
-from minutes.models import AuditEntry, DecisionCard, LetterKind
-from minutes.tools import build_monthly_statement, case_requests, load_case_record, store_requests
+from minutes.deadlines import evaluate_deadlines
+from minutes.extraction import extract_ledger
+from minutes.models import (
+    AuditEntry,
+    Correspondence,
+    CorrespondenceKind,
+    DecisionCard,
+    IEPLedger,
+    LetterKind,
+    Provenance,
+    ServiceEvent,
+    ServiceObligation,
+)
+from minutes.reconcile import canonical_service
+from minutes.tools import (
+    CORRESPONDENCE_FIXTURE,
+    build_monthly_statement,
+    case_requests,
+    load_case_record,
+    store_requests,
+)
 
 app = BedrockAgentCoreApp()
 
@@ -78,8 +126,8 @@ STATE_DIR = Path(os.environ.get("MINUTES_STATE_DIR", Path(tempfile.gettempdir())
 STATE_BUCKET = os.environ.get("MINUTES_SESSION_BUCKET") or None
 STATE_PREFIX = os.environ.get("MINUTES_SESSION_PREFIX", "cases/")
 
-# The sample case. A real deployment names the case in the payload.
-DEFAULT_CASE_ID = "maya-demo"
+# DEFAULT_CASE_ID, the read-only sample, is minutes.cases.DEFAULT_CASE_ID and is
+# imported above so the runtime and the store cannot name it differently.
 
 # The cards already put in front of this parent, at the worst they reached.
 # Kept in agent state beside the records-request machine so a wake can
@@ -90,11 +138,16 @@ STATE_RAISED = "minutes.raised"
 _caseworkers: dict[str, Caseworker] = {}
 
 
-def _case_key(session_id: str, payload: dict) -> str:
-    """What a caseworker is keyed by: the case when state is durable, else the session."""
-    if STATE_BUCKET:
-        return str((payload or {}).get("case_id") or DEFAULT_CASE_ID)
-    return session_id
+def _case_key(payload: dict) -> str:
+    """What a caseworker is keyed by: the case, always.
+
+    A parent's case is the unit. Two runtime sessions on the same case must
+    open the same caseworker (or the parent asked on Monday cannot answer on
+    Thursday), and one runtime session serving two cases must never share
+    one. The session id is not part of the key on a laptop either, so a test
+    and a deployment exercise the same rule.
+    """
+    return validate_case_id((payload or {}).get("case_id") or DEFAULT_CASE_ID)
 
 
 def _caseworker(key: str) -> Caseworker:
@@ -443,6 +496,317 @@ def _statement(payload: dict) -> dict:
     return {"status": "done", "statement": rendered}
 
 
+# ---------------------------------------------------------------------------
+# A parent's own case.
+#
+# Everything below reads and writes the case store directly. None of it drives
+# the caseworker, and only two functions (ingest and classification) reach a
+# model. Every response is data; a refusal is an error string a parent can read.
+# ---------------------------------------------------------------------------
+
+MIN_IEP_CHARS = 200
+"""The least text that could be an IEP. Shorter is a title, a heading, or a
+pasted URL, and extracting a ledger from it would invent every field."""
+
+
+def _writable(case_id: str) -> None:
+    if is_sample(case_id):
+        raise ValueError("the sample case is read-only")
+
+
+def _obligation_row(o: ServiceObligation) -> dict:
+    return {
+        "service": o.service,
+        "minutes_per_session": o.minutes_per_session,
+        "sessions_per_period": o.sessions_per_period,
+        "period": o.period.value,
+        "provider_role": o.provider_role,
+        "setting": o.setting,
+        "start_date": o.start_date.isoformat(),
+        "end_date": o.end_date.isoformat(),
+        "source_quote": o.source_quote,
+    }
+
+
+def _empty_case(case_id: str) -> dict:
+    return {
+        "status": "done",
+        "case_id": case_id,
+        "exists": False,
+        "sample": False,
+        "student": None,
+        "school_year": None,
+        "iep_date": None,
+        "obligations": [],
+        "deadlines": [],
+        "accommodations": [],
+        "counts": {"events": 0, "correspondence": 0, "requests": 0},
+    }
+
+
+def _case(case_id: str) -> dict:
+    """The ledger as the parent should see it, and how much evidence stands behind it.
+
+    An unknown id is not an error: a front end asking "is there a case here
+    yet" gets ``exists: false`` and empty lists, and knows to offer the paste
+    box. The request count comes from the caseworker's own session, because the
+    requests this agent has released live there and not in the case store.
+    """
+    if not is_sample(case_id) and not case_store().exists(case_id):
+        return _empty_case(case_id)
+    case = load_case_record(case_id)
+    ledger = case.ledger
+    return {
+        "status": "done",
+        "case_id": case_id,
+        "exists": True,
+        "sample": is_sample(case_id),
+        "student": ledger.student_alias,
+        "school_year": ledger.school_year,
+        "iep_date": ledger.iep_date.isoformat(),
+        "obligations": [_obligation_row(o) for o in ledger.obligations],
+        "deadlines": [
+            {"kind": d.kind.value, "due": d.due.isoformat(), "description": d.description}
+            for d in ledger.deadlines
+        ],
+        "accommodations": [a.description for a in ledger.accommodations],
+        "counts": {
+            "events": len(case.events),
+            "correspondence": case.correspondence_items,
+            "requests": len(case_requests(_caseworker(case_id).agent, case)),
+        },
+    }
+
+
+def _ingest_iep(case_id: str, payload: dict) -> dict:
+    """Turn the IEP a parent pasted into this case's ledger. ONE model call.
+
+    This is the only place the model ever reads the IEP. What it returns is a
+    typed ledger in which every obligation carries the sentence it came from,
+    and from here on every figure about this family is arithmetic over it.
+    """
+    _writable(case_id)
+    text = payload.get("text")
+    if not isinstance(text, str) or len(text.strip()) < MIN_IEP_CHARS:
+        raise ValueError(
+            f"'text' must be the IEP itself, at least {MIN_IEP_CHARS} characters; got "
+            f"{len(text.strip()) if isinstance(text, str) else 0}"
+        )
+    ledger: IEPLedger = extract_ledger(text)
+    store = case_store()
+    store.write_ledger(case_id, ledger)
+    store.touch(case_id, student_alias=ledger.student_alias, source="pasted")
+    return _case(case_id)
+
+
+def _obligation_for(ledger: IEPLedger, service: str) -> ServiceObligation:
+    """The ledger line a parent's service name means, by the reconciler's own rule.
+
+    The same folding :func:`minutes.reconcile.canonical_service` applies to
+    events, so a note that matches here is a note reconciliation will count.
+    A name that matches nothing is refused with the names that would have.
+    """
+    wanted = canonical_service(service)
+    for obligation in ledger.obligations:
+        if wanted and canonical_service(obligation.service) == wanted:
+            return obligation
+    raise ValueError(
+        f"'service' {service!r} matches none of this IEP's services; use one of: "
+        + ", ".join(o.service for o in ledger.obligations)
+    )
+
+
+def _next_id(prefix: str, day: date, taken: set[str]) -> str:
+    """``<prefix>-<date>-<n>``, the first ``n`` this case has not used.
+
+    The same shape the fixture correspondence uses (``plog-2026-09-14-01``),
+    because an event's ``source`` and its item's ``item_id`` are one string and
+    every citation in a letter points back through it.
+    """
+    for n in range(1, 1000):
+        candidate = f"{prefix}-{day.isoformat()}-{n:02d}"
+        if candidate not in taken:
+            return candidate
+    raise ValueError(f"more than 999 {prefix} items on {day.isoformat()}")
+
+
+def _taken_ids(case_id: str) -> set[str]:
+    store = case_store()
+    return {item.item_id for item in store.read_correspondence(case_id)} | {
+        event.source for event in store.read_events(case_id)
+    }
+
+
+def _add_note(case_id: str, payload: dict) -> dict:
+    """A parent's dated observation, recorded without a model.
+
+    A note is the one kind of evidence a parent can produce alone, and it is
+    graded accordingly — ``PARENT_OBSERVED``, always attributed as the family's
+    observation in anything compiled from it. It becomes two records: the
+    event reconciliation counts, and the correspondence item that keeps what
+    the parent actually wrote, under one id, so the note's own words are what
+    :func:`~minutes.correspondence.attributed` reads to decide whether a missed
+    session was the child's absence.
+    """
+    _writable(case_id)
+    case = load_case_record(case_id)
+    day = _day(payload, "date")
+    delivered = payload.get("delivered")
+    if not isinstance(delivered, bool):
+        raise ValueError("'delivered' must be true or false")
+    service = str(payload.get("service") or "").strip()
+    if not service:
+        raise ValueError("'service' is required; name the IEP service the note is about")
+    obligation = _obligation_for(case.ledger, service)
+
+    minutes = payload.get("minutes")
+    if minutes is not None and (isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 0):
+        raise ValueError(f"'minutes' must be a whole number of minutes, got {minutes!r}")
+    if delivered:
+        minutes = obligation.minutes_per_session if minutes is None else minutes
+    else:
+        minutes = 0
+
+    text = payload.get("text")
+    text = text.strip() if isinstance(text, str) and text.strip() else None
+    body = text or (
+        f"{obligation.service} on {day.isoformat()}: "
+        + (f"delivered, about {minutes} minutes." if delivered else "not delivered.")
+    )
+
+    source = _next_id("note", day, _taken_ids(case_id))
+    item = Correspondence(
+        item_id=source,
+        received=day,
+        kind=CorrespondenceKind.PARENT_LOG,
+        sender="parent",
+        subject=f"quick log: {obligation.service}",
+        body=body,
+    )
+    event = ServiceEvent(
+        event_date=day,
+        service=obligation.service,
+        minutes=minutes,
+        delivered=delivered,
+        provenance=Provenance.PARENT_OBSERVED,
+        source=source,
+    )
+    (event,) = attributed([event], [item])
+
+    store = case_store()
+    store.append_correspondence(case_id, [item])
+    store.append_events(case_id, [event])
+    store.touch(case_id)
+    return {
+        "status": "done",
+        "event": event.model_dump(mode="json"),
+        "item": item.model_dump(mode="json"),
+    }
+
+
+def _add_correspondence(case_id: str, payload: dict) -> dict:
+    """A pasted school item, read for the dated service facts it states.
+
+    The classifier is the fixture's classifier, unchanged: provenance comes
+    from ``kind``, every date must be grounded in the item's own text, every
+    duration must be written in it, and facts are voted across passes. So an
+    empty ``events`` is a normal result — most school email contains no dated
+    session fact — and it is returned as such, not as a failure.
+    """
+    _writable(case_id)
+    case = load_case_record(case_id)
+    received = _day(payload, "received")
+    raw_kind = payload.get("kind")
+    try:
+        kind = CorrespondenceKind(str(raw_kind))
+    except ValueError:
+        raise ValueError(
+            f"'kind' {raw_kind!r} is not one of: " + ", ".join(k.value for k in CorrespondenceKind)
+        ) from None
+    sender = str(payload.get("sender") or "").strip()
+    if not sender:
+        raise ValueError("'sender' is required; who the item came from")
+    body = str(payload.get("body") or "").strip()
+    if not body:
+        raise ValueError("'body' is required; the text of the item")
+    subject = str(payload.get("subject") or "").strip()
+
+    item = Correspondence(
+        item_id=_next_id("paste", received, _taken_ids(case_id)),
+        received=received,
+        kind=kind,
+        sender=sender,
+        subject=subject,
+        body=body,
+    )
+    events = attributed(classify_to_events([item], case.ledger), [item])
+
+    store = case_store()
+    store.append_correspondence(case_id, [item])
+    store.append_events(case_id, events)
+    store.touch(case_id)
+    return {
+        "status": "done",
+        "item": item.model_dump(mode="json"),
+        "events": [event.model_dump(mode="json") for event in events],
+    }
+
+
+def _correspondence(case_id: str) -> list[Correspondence]:
+    if is_sample(case_id):
+        return load_correspondence(CORRESPONDENCE_FIXTURE)
+    return case_store().read_correspondence(case_id)
+
+
+def _list_evidence(case_id: str) -> dict:
+    """The record, newest first: every delivery fact and every item it was read from."""
+    case = load_case_record(case_id)
+    events = sorted(case.events, key=lambda e: (e.event_date, e.source), reverse=True)
+    items = sorted(_correspondence(case_id), key=lambda i: (i.received, i.item_id), reverse=True)
+    return {
+        "status": "done",
+        "events": [event.model_dump(mode="json") for event in events],
+        "correspondence": [item.model_dump(mode="json") for item in items],
+    }
+
+
+def _deadlines(case_id: str, payload: dict) -> dict:
+    today = _day(payload, "today", date.today())
+    statuses = evaluate_deadlines(load_case_record(case_id).ledger, today)
+    return {
+        "status": "done",
+        "deadlines": [
+            {
+                "kind": status.deadline.kind.value,
+                "due": status.deadline.due.isoformat(),
+                "description": status.deadline.description,
+                "state": status.state.value,
+                "days_remaining": status.days_remaining,
+            }
+            for status in statuses
+        ],
+    }
+
+
+def _mark_received(worker: Caseworker, payload: dict) -> dict:
+    """The parent says the district received a request: start its clock.
+
+    The same transition the caseworker's ``record_request_delivery`` tool
+    performs, through the same function, so the rules cannot differ between a
+    parent who typed the date and a parent who told the caseworker.
+    """
+    request_id = str(payload.get("request_id") or "").strip()
+    if not request_id:
+        raise ValueError("'request_id' is required, e.g. 'req-001'")
+    received = _day(payload, "received_on")
+    receipt = record_delivery(worker.agent, request_id, received)
+    worker.sync()
+    if not receipt.get("recorded"):
+        raise ValueError(receipt["note"])
+    request = next(r for r in worker.requests() if r.request_id == request_id)
+    return {"status": "done", "request": request.model_dump(mode="json")}
+
+
 def _answer(worker: Caseworker, payload: dict) -> dict:
     answers = payload.get("answers")
     if not isinstance(answers, dict) or not answers:
@@ -468,14 +832,34 @@ def invoke(payload: dict, context) -> dict:
         or str(uuid.uuid4())
     )
     action = str((payload or {}).get("action", "wake")).lower()
+    payload = payload or {}
 
+    token = None
     try:
+        # The case is resolved before anything else and held for the whole
+        # invocation, including the thread a background wake copies its
+        # context onto. The finally below is what keeps one request's case
+        # from leaking into the next one this process serves.
+        case = _case_key(payload)
+        token = set_current_case(case)
+
         if action == "statement":
             return _statement(payload)
         if action == "status":
             return _status(payload)
+        if action == "case":
+            return _case(case)
+        if action == "ingest_iep":
+            return _ingest_iep(case, payload)
+        if action == "add_note":
+            return _add_note(case, payload)
+        if action == "add_correspondence":
+            return _add_correspondence(case, payload)
+        if action == "list_evidence":
+            return _list_evidence(case)
+        if action == "deadlines":
+            return _deadlines(case, payload)
 
-        case = _case_key(session_id, payload)
         worker = _caseworker(case)
         if action == "wake":
             if payload.get("background"):
@@ -502,14 +886,20 @@ def invoke(payload: dict, context) -> dict:
                 "status": "done",
                 "requests": [request.model_dump(mode="json") for request in worker.requests()],
             }
+        if action == "mark_received":
+            return _mark_received(worker, payload)
         raise ValueError(
             f"unknown action {action!r}; expected one of wake, statement, status, ask, "
-            "answer, outbox, declined, audit, requests"
+            "answer, outbox, declined, audit, requests, case, ingest_iep, add_note, "
+            "add_correspondence, list_evidence, deadlines, mark_received"
         )
     except ValueError as exc:
         return {"status": "error", "error": str(exc), "session_id": session_id}
     except Exception as exc:  # the runtime boundary: report, do not crash the microVM
         return {"status": "error", "error": f"{type(exc).__name__}: {exc}", "session_id": session_id}
+    finally:
+        if token is not None:
+            reset_current_case(token)
 
 
 if __name__ == "__main__":
