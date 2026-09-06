@@ -1,0 +1,115 @@
+{
+  "student_alias": "Devon K.",
+  "school_year": "2026-2027",
+  "iep_date": "2026-08-27",
+  "obligations": [
+    {
+      "service": "Integrated Co-Teaching Services (ELA, Mathematics)",
+      "minutes_per_session": 45,
+      "sessions_per_period": 5,
+      "period": "week",
+      "provider_role": "Special Education Teacher / General Education Teacher",
+      "setting": "General education classroom",
+      "start_date": "2026-09-09",
+      "end_date": "2027-06-25",
+      "source_quote": "Integrated Co-Teaching Services (ELA, Mathematics) | 5 days per week | 45 minutes | General education classroom | 09/09/2026"
+    },
+    {
+      "service": "Speech-Language Therapy (individual)",
+      "minutes_per_session": 30,
+      "sessions_per_period": 2,
+      "period": "week",
+      "provider_role": "Licensed Speech-Language Pathologist",
+      "setting": "Speech room",
+      "start_date": "2026-09-09",
+      "end_date": "2027-06-25",
+      "source_quote": "Speech-Language Therapy (individual) | 2 days per week | 30 minutes | Speech room | 09/09/2026"
+    },
+    {
+      "service": "Counseling Services (group of 3)",
+      "minutes_per_session": 40,
+      "sessions_per_period": 1,
+      "period": "week",
+      "provider_role": "School Counselor",
+      "setting": "Counselor's office",
+      "start_date": "2026-09-09",
+      "end_date": "2027-06-25",
+      "source_quote": "Counseling Services (group of 3) | 1 day per week | 40 minutes | Counselor's office | 09/09/2026"
+    },
+    {
+      "service": "Physical Therapy (individual)",
+      "minutes_per_session": 30,
+      "sessions_per_period": 1,
+      "period": "week",
+      "provider_role": "Physical Therapist",
+      "setting": "Therapy room",
+      "start_date": "2026-09-09",
+      "end_date": "2027-06-25",
+      "source_quote": "Physical Therapy (individual) | 1 day per week | 30 minutes | Therapy room | 09/09/2026"
+    }
+  ],
+  "deadlines": [
+    {
+      "kind": "annual_review",
+      "due": "2027-08-26",
+      "description": "Annual review of IEP",
+      "source_quote": "Projected Date of Annual Review: 08/26/2027"
+    },
+    {
+      "kind": "reevaluation",
+      "due": "2029-03-15",
+      "description": "Reevaluation of student",
+      "source_quote": "Projected Date of Reevaluation: 03/15/2029"
+    },
+    {
+      "kind": "progress_report",
+      "due": "2026-11-13",
+      "description": "Progress report to parent (first marking period)",
+      "source_quote": "Progress toward annual goals will be reported to the parent in writing four times per year, coinciding with the school's report card periods: November 13, 2026; January 29, 2027; April 16, 2027; and June 25, 2027."
+    },
+    {
+      "kind": "progress_report",
+      "due": "2027-01-29",
+      "description": "Progress report to parent (second marking period)",
+      "source_quote": "Progress toward annual goals will be reported to the parent in writing four times per year, coinciding with the school's report card periods: November 13, 2026; January 29, 2027; April 16, 2027; and June 25, 2027."
+    },
+    {
+      "kind": "progress_report",
+      "due": "2027-04-16",
+      "description": "Progress report to parent (third marking period)",
+      "source_quote": "Progress toward annual goals will be reported to the parent in writing four times per year, coinciding with the school's report card periods: November 13, 2026; January 29, 2027; April 16, 2027; and June 25, 2027."
+    },
+    {
+      "kind": "progress_report",
+      "due": "2027-06-25",
+      "description": "Progress report to parent (fourth marking period)",
+      "source_quote": "Progress toward annual goals will be reported to the parent in writing four times per year, coinciding with the school's report card periods: November 13, 2026; January 29, 2027; April 16, 2027; and June 25, 2027."
+    }
+  ],
+  "accommodations": [
+    {
+      "description": "Preferential seating near the point of instruction",
+      "source_quote": "Preferential seating near the point of instruction."
+    },
+    {
+      "description": "Directions repeated and rephrased; checks for understanding",
+      "source_quote": "Directions repeated and rephrased; checks for understanding."
+    },
+    {
+      "description": "Use of a graphic organizer for multi-step written tasks",
+      "source_quote": "Use of a graphic organizer for multi-step written tasks."
+    },
+    {
+      "description": "Movement breaks of up to 3 minutes, not more than twice per class period",
+      "source_quote": "Movement breaks of up to 3 minutes, not more than twice per class period."
+    },
+    {
+      "description": "Extended time (1.5x) on classroom and State assessments",
+      "source_quote": "Extended time (1.5x) on classroom and State assessments."
+    },
+    {
+      "description": "Separate location for State assessments",
+      "source_quote": "Separate location for State assessments."
+    }
+  ]
+}
