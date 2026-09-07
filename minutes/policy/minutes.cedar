@@ -26,6 +26,7 @@ permit (
     Action::"draft_shortfall_letter",
     Action::"build_monthly_statement",
     Action::"pending_decisions",
+    Action::"read_correspondence_item",
     Action::"audit_trail"
   ],
   resource

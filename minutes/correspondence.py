@@ -94,6 +94,7 @@ from .models import (
     ServiceEvent,
     ServiceObligation,
 )
+from .quarantine import QUARANTINE_RULE, fence, new_nonce
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 CORRESPONDENCE_DIR = FIXTURES / "correspondence"
@@ -178,6 +179,39 @@ routes, menus, book fairs. Emit nothing for those.
 Report what the document says, not what you conclude from it. You are not \
 judging whether anything was owed, whether a miss was excusable, or whether \
 anyone was at fault."""
+
+
+READER_SYSTEM_PROMPT = SYSTEM_PROMPT + QUARANTINE_RULE
+"""What the reader is actually given: the reading rules, plus the rule that
+everything it is about to read is a document and not an order."""
+
+
+def build_reader(model: BedrockModel | None = None) -> Agent:
+    """The reader agent: it can read, and it can do nothing else.
+
+    ``tools=()`` is the load-bearing argument in this call, and it is passed
+    explicitly rather than left to the default so that removing it is a visible
+    edit. Every dangerous thing Minutes can do — compiling a letter, releasing
+    one to the outbox, starting a statutory clock — is a tool on the caseworker
+    in :mod:`minutes.agent`. The reader holds none of them, and it is the only
+    agent in the system that is ever shown text a stranger wrote. So the
+    familiar attack on a document-reading agent, in which the document tells
+    the agent to go and do something, has no verb available to it here: the
+    single thing this agent can emit is a ``ClassificationBatch``.
+
+    It carries no session manager either. Each batch is read by a fresh agent
+    with no memory of the last one, so a document cannot leave anything behind
+    for the next document to find.
+    """
+    return Agent(
+        model=model
+        or BedrockModel(model_id=CLASSIFIER_MODEL, region_name=BEDROCK_REGION, max_tokens=4096),
+        system_prompt=READER_SYSTEM_PROMPT,
+        tools=(),
+        name="minutes-reader",
+        description="Reads inbound correspondence into typed service facts. Holds no tools.",
+        callback_handler=None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -327,10 +361,11 @@ def classify_to_events(items: list[Correspondence], ledger: IEPLedger) -> list[S
     drafts: list[EventDraft] = []
     for _ in range(CLASSIFIER_PASSES):
         for batch in batches:
-            # A fresh Agent per batch: batches are independent, and a shared one
-            # would carry every previous batch forward as conversation history.
-            agent = Agent(model=model, system_prompt=SYSTEM_PROMPT, callback_handler=None)
-            drafts.extend(agent.structured_output(ClassificationBatch, _batch_prompt(batch, ledger)).events)
+            # A fresh reader per batch: batches are independent, and a shared
+            # one would carry every previous batch forward as conversation
+            # history — which is also how one document would reach the next.
+            reader = build_reader(model)
+            drafts.extend(reader.structured_output(ClassificationBatch, _batch_prompt(batch, ledger)).events)
 
     return attributed(_drafts_to_events(drafts, items, ledger, min_readings=VOTE_QUORUM), items)
 
@@ -368,14 +403,22 @@ def _batch_prompt(batch: list[Correspondence], ledger: IEPLedger) -> str:
 
 
 def _render(item: Correspondence) -> str:
+    """One item, with everything its writer controls inside its own fence.
+
+    The fence gets a fresh nonce per item, not per batch, so one document
+    cannot close a neighbour's quotation and carry on in the reader's own
+    voice. Only the three fields a stranger wrote go inside it; the item id,
+    the kind, the received date and the resolved date table are ours, and stay
+    outside where the reader can rely on them.
+    """
+    nonce = new_nonce()
+    stranger = f"from: {item.sender}\nsubject: {item.subject}\nbody:\n{item.body}"
     return (
         f"--- item_id: {item.item_id}\n"
         f"kind: {item.kind.value}\n"
         f"received: {item.received.isoformat()} ({item.received.strftime('%A')})\n"
         f"dates: {_date_hints(item.received)}\n"
-        f"from: {item.sender}\n"
-        f"subject: {item.subject}\n"
-        f"body:\n{item.body}\n"
+        f"{fence(stranger, nonce)}\n"
     )
 
 

@@ -93,7 +93,7 @@ from minutes.cases import (
     set_current_case,
     validate_case_id,
 )
-from minutes.correspondence import attributed, classify_to_events, load_correspondence
+from minutes.correspondence import attributed, load_correspondence
 from minutes.cycle import CycleOutcome, RaisedCard, run_cycle
 from minutes.deadlines import evaluate_deadlines
 from minutes.extraction import extract_ledger
@@ -108,6 +108,7 @@ from minutes.models import (
     ServiceEvent,
     ServiceObligation,
 )
+from minutes.reader import documents_for, read_items
 from minutes.reconcile import canonical_service
 from minutes.tools import (
     CORRESPONDENCE_FIXTURE,
@@ -766,23 +767,23 @@ def _add_correspondence(case_id: str, payload: dict) -> dict:
         subject=subject,
         body=body,
     )
-    events = attributed(classify_to_events([item], case.ledger), [item])
+    reading = read_items([item], case.ledger)[0]
 
     store = case_store()
     store.append_correspondence(case_id, [item])
-    store.append_events(case_id, events)
+    store.append_events(case_id, reading.events)
     store.touch(case_id)
     return {
         "status": "done",
         "item": item.model_dump(mode="json"),
-        "events": [event.model_dump(mode="json") for event in events],
+        "events": [event.model_dump(mode="json") for event in reading.events],
+        "instruction_findings": [finding.as_dict() for finding in reading.findings],
     }
 
 
 def _correspondence(case_id: str) -> list[Correspondence]:
-    if is_sample(case_id):
-        return load_correspondence(CORRESPONDENCE_FIXTURE)
-    return case_store().read_correspondence(case_id)
+    """Documents on file. Goes through the reader module, which owns them."""
+    return documents_for(case_id)
 
 
 def _list_evidence(case_id: str) -> dict:

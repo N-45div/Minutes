@@ -154,6 +154,7 @@ def test_every_tool_is_registered(tmp_path):
         "draft_shortfall_letter",
         "build_monthly_statement",
         "pending_decisions",
+        "read_correspondence_item",
         "audit_trail",
         "record_request_delivery",
         "send_records_request",

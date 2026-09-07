@@ -118,6 +118,7 @@ from .letters import (
     placeholders,
     validate_letter,
 )
+from .reader import read_correspondence_item
 from .models import (
     AuditEntry,
     DeadlineStatus,
@@ -1615,9 +1616,18 @@ READ_TOOLS = (
     draft_shortfall_letter,
     build_monthly_statement,
     pending_decisions,
+    read_correspondence_item,
     audit_trail,
 )
-"""Everything the agent may do unattended. All read-only or drafting-only."""
+"""Everything the agent may do unattended. All read-only or drafting-only.
+
+``read_correspondence_item`` is the odd one and the reason to look twice. It is
+read-only like the rest, but it is the only tool here that reaches text a
+stranger wrote, and it reaches it through a second agent that holds no tools of
+its own (:mod:`minutes.reader`). What comes back is dated service facts. The
+document's subject and body do not come back at all, so nothing an outsider
+wrote can arrive in the context of the agent that writes the letters.
+"""
 
 RECORD_TOOLS = (record_request_delivery,)
 """Records a fact only the family has. Changes case state; reaches nobody.
