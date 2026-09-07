@@ -955,11 +955,29 @@
         var KIND = { school_email: 'School email', parent_log: 'Your note', progress_report: 'Progress report', service_log: 'Service log' };
         ibox.innerHTML = '<ul class="rows evidence">' + items.map(function (it) {
           var chip = it.kind === 'parent_log' ? '<span class="prov parent">Your note</span>' : '<span class="prov">' + esc(KIND[it.kind] || it.kind) + '</span>';
+          // An item whose text tried to give the software orders. It is listed,
+          // read and reconciled like any other; this only says so out loud.
+          var found = Array.isArray(it.instruction_findings) ? it.instruction_findings : [];
+          if (found.length) chip += '<span class="prov instructed" title="Filed as written. It changed nothing.">Tried to instruct</span>';
           return '<li><span class="d">' + esc(fmtDate(it.received)) + '</span><span>' + esc(it.subject || KIND[it.kind] || '') + '<span class="sub">' + esc(it.sender || '') + (it.item_id ? ' · ' + esc(it.item_id) : '') + '</span>' +
+            instructionNote(found) +
             '<details class="kept"><summary>The text</summary><div class="paper" style="font-size:15px;padding:16px 18px">' + esc(it.body || '') + '</div></details></span><span class="tags">' + chip + '</span></li>';
         }).join('') + '</ul>';
       }
     }).catch(function (err) { if (guard()) document.getElementById('evidence-list').innerHTML = errorHtml(err); });
+  }
+
+  // Minutes reads inbound mail with an agent that holds no tools and can only
+  // answer in dated facts, so a message written to steer it has nothing to
+  // steer. Saying that plainly is the whole job of this block: the parent is
+  // told what the message tried, and told that it did not work.
+  function instructionNote(found) {
+    if (!found || !found.length) return '';
+    var what = found.map(function (f) { return esc(f.pattern); }).join(', ');
+    var quote = found[0] && found[0].excerpt ? '<div class="quote">' + esc(found[0].excerpt) + '</div>' : '';
+    return '<div class="instructed-note"><b>This message contains text written to instruct software</b> (' + what + '). ' +
+      'It is filed here exactly as it arrived, because it is evidence. It changed nothing: the reader that ' +
+      'processes mail holds no tools, and no minutes moved on the strength of it.' + quote + '</div>';
   }
 
   function fillServiceSelect(sel, services) {
@@ -1028,8 +1046,10 @@
         clearFormError(f);
         // {item, events}: the item as kept, and the dated facts read out of it (often none).
         var events = res.events || [];
+        var found = Array.isArray(res.instruction_findings) ? res.instruction_findings : [];
         result.innerHTML = '<div class="state-box" style="margin-top:12px"><div>Read. ' + (events.length ? events.length + ' dated ' + plural(events.length, 'fact') + ' went on file:' : 'No dated service fact was found in it; the item itself is kept.') + '</div>' +
-          (events.length ? '<ul class="facts">' + events.map(function (ev) { return '<li>' + esc(fmtDate(ev.event_date)) + ' · ' + esc(ev.service) + ' · ' + (ev.delivered ? fmtMin(ev.minutes) + ' minutes' : 'missed') + '</li>'; }).join('') + '</ul>' : '') + '</div>';
+          (events.length ? '<ul class="facts">' + events.map(function (ev) { return '<li>' + esc(fmtDate(ev.event_date)) + ' · ' + esc(ev.service) + ' · ' + (ev.delivered ? fmtMin(ev.minutes) + ' minutes' : 'missed') + '</li>'; }).join('') + '</ul>' : '') +
+          instructionNote(found) + '</div>';
         f.body.value = ''; f.subject.value = '';
         loadEvidence(id, guard);
       }).catch(function (err) { btn.disabled = false; status.textContent = ''; showFormError(f, err); });

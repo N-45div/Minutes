@@ -108,6 +108,7 @@ from minutes.models import (
     ServiceEvent,
     ServiceObligation,
 )
+from minutes.quarantine import scan
 from minutes.reader import documents_for, read_items
 from minutes.reconcile import canonical_service
 from minutes.tools import (
@@ -787,14 +788,31 @@ def _correspondence(case_id: str) -> list[Correspondence]:
 
 
 def _list_evidence(case_id: str) -> dict:
-    """The record, newest first: every delivery fact and every item it was read from."""
+    """The record, newest first: every delivery fact and every item it was read from.
+
+    Each item carries the quarantine scan's findings, derived here on the way
+    out rather than stored when it was filed. That is the same rule provenance
+    and attribution follow, and it earns the same thing: the notice a parent
+    sees reflects today's scan, so tightening a pattern does not require
+    re-reading a semester, and nothing about the flag can drift away from the
+    text it describes. It stays a note either way — the item is listed,
+    reconciled and cited exactly as it would be unflagged.
+    """
     case = load_case_record(case_id)
     events = sorted(case.events, key=lambda e: (e.event_date, e.source), reverse=True)
     items = sorted(_correspondence(case_id), key=lambda i: (i.received, i.item_id), reverse=True)
     return {
         "status": "done",
         "events": [event.model_dump(mode="json") for event in events],
-        "correspondence": [item.model_dump(mode="json") for item in items],
+        "correspondence": [
+            {
+                **item.model_dump(mode="json"),
+                "instruction_findings": [
+                    finding.as_dict() for finding in scan(item.subject, item.body, item.sender)
+                ],
+            }
+            for item in items
+        ],
     }
 
 
