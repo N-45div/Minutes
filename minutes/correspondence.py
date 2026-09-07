@@ -80,7 +80,7 @@ from collections.abc import Iterator
 from datetime import date, timedelta
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from strands import Agent
 from strands.models import BedrockModel
 
@@ -251,6 +251,20 @@ class ClassificationBatch(BaseModel):
         description="Empty when nothing in the batch states that a session did or did not happen",
     )
 
+    @field_validator("events", mode="before")
+    @classmethod
+    def _null_is_empty(cls, value: object) -> object:
+        """A small model asked for nothing writes ``null`` about as often as ``[]``.
+
+        Which would be a footnote, except for where this schema sits: it is
+        filled in from documents strangers wrote, and most of those documents
+        legitimately produce no events at all. Rejecting ``null`` means an
+        ordinary school announcement can fail a parent's paste — and a message
+        written to be awkward can do it on purpose. Both forms mean the same
+        thing here, so both are read the same way.
+        """
+        return [] if value is None else value
+
 
 def load_correspondence(name: str = "maya_fall_2026") -> list[Correspondence]:
     """Load one synthetic semester, oldest item first.
@@ -359,13 +373,39 @@ def classify_to_events(items: list[Correspondence], ledger: IEPLedger) -> list[S
     batches = list(_batches(items))
 
     drafts: list[EventDraft] = []
-    for _ in range(CLASSIFIER_PASSES):
-        for batch in batches:
+    for batch in batches:
+        readings = 0
+        failure: Exception | None = None
+        for _ in range(CLASSIFIER_PASSES):
             # A fresh reader per batch: batches are independent, and a shared
             # one would carry every previous batch forward as conversation
             # history — which is also how one document would reach the next.
             reader = build_reader(model)
-            drafts.extend(reader.structured_output(ClassificationBatch, _batch_prompt(batch, ledger)).events)
+            try:
+                drafts.extend(
+                    reader.structured_output(ClassificationBatch, _batch_prompt(batch, ledger)).events
+                )
+            except Exception as unreadable:  # noqa: BLE001 -- re-raised below if it matters
+                # One pass that came back unusable is one pass that said
+                # nothing, and saying nothing is what the vote below already
+                # knows how to handle. Which is the point of tolerating it at
+                # all: this reader is pointed at documents an outsider wrote,
+                # so "the model returned something malformed" is a thing a
+                # document can arrange, and a parent's evidence should not be
+                # unfilable because a message was written awkwardly.
+                failure = unreadable
+                continue
+            readings += 1
+
+        if readings < VOTE_QUORUM:
+            # Below the quorum there is nothing to vote on, so the honest
+            # result is not an empty list — it is that the batch was not read.
+            # Returning silently here is the one failure that would let a
+            # document erase the true sentence sitting next to its own noise.
+            raise RuntimeError(
+                f"read {readings} of {CLASSIFIER_PASSES} passes over "
+                f"{len(batch)} item(s); {VOTE_QUORUM} are needed to establish a fact"
+            ) from failure
 
     return attributed(_drafts_to_events(drafts, items, ledger, min_readings=VOTE_QUORUM), items)
 

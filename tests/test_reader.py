@@ -13,7 +13,7 @@ from datetime import date
 
 import pytest
 
-from minutes import reader
+from minutes import correspondence, reader
 from minutes.correspondence import (
     READER_SYSTEM_PROMPT,
     EventDraft,
@@ -432,3 +432,76 @@ def test_the_sample_case_documents_are_readable():
 def _call_tool(item_id: str) -> dict:
     """A @tool is still directly callable as the plain function it decorates."""
     return reader.read_correspondence_item(item_id=item_id)
+
+
+# ---------------------------------------------------------------------------
+# What happens when the reading itself fails.
+#
+# Found on the deployed runtime, not in a test: pasting the hostile email
+# returned a pydantic error instead of a result, because the model answered
+# "no events" by writing null. A document that can make the reader raise is a
+# document that can stop a parent filing evidence, so both halves are pinned.
+# ---------------------------------------------------------------------------
+
+
+class _Reader:
+    """A reader whose passes fail or answer, in a scripted order."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.calls = 0
+
+    def structured_output(self, schema, prompt):
+        outcome = self.script[min(self.calls, len(self.script) - 1)]
+        self.calls += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return schema(events=outcome)
+
+
+@pytest.fixture
+def scripted_reader(monkeypatch):
+    """Replace the reader and the model behind it. Nothing reaches Bedrock."""
+    monkeypatch.setattr(correspondence, "BedrockModel", lambda **kwargs: object())
+    box = {}
+
+    def build(model=None):
+        return box["reader"]
+
+    monkeypatch.setattr(correspondence, "build_reader", build)
+    return box
+
+
+def test_a_model_that_writes_null_means_no_events(scripted_reader):
+    """``null`` and ``[]`` are the same answer, and most school mail gives it."""
+    scripted_reader["reader"] = _Reader([None, None, None])
+    assert correspondence.classify_to_events([_item()], _ledger()) == []
+
+
+def test_one_unreadable_pass_is_silence_and_the_other_two_still_vote(scripted_reader):
+    """A malformed reply is a pass that said nothing, which the vote handles."""
+    draft = EventDraft(
+        item_id="paste-2026-11-10-01",
+        event_date=date(2026, 11, 10),
+        service=SPEECH,
+        delivered=True,
+        minutes=30,
+    )
+    item = _item(body="Maya had her speech session today, the full 30 minutes.")
+    scripted_reader["reader"] = _Reader([ValueError("malformed"), [draft], [draft]])
+
+    (event,) = correspondence.classify_to_events([item], _ledger())
+    assert event.event_date == date(2026, 11, 10) and event.delivered is True
+
+
+def test_too_few_readings_is_reported_not_reported_as_nothing(scripted_reader):
+    """The failure a document could otherwise use to erase the sentence beside it.
+
+    Below the quorum there is nothing to vote on, so an empty list would be a
+    lie: it would say the documents state no facts, when what happened is that
+    they were not read.
+    """
+    scripted_reader["reader"] = _Reader([ValueError("malformed")])
+
+    with pytest.raises(RuntimeError, match="read 0 of 3 passes"):
+        correspondence.classify_to_events([_item()], _ledger())
