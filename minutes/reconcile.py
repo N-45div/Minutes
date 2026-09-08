@@ -498,11 +498,35 @@ def unmatched_events(
     ]
 
 
+def _slot(event: ServiceEvent) -> date:
+    """The promised session this record speaks about, as a date.
+
+    Almost always the date the record is about. The exception is a delivery the
+    record itself calls a make-up for an earlier session: those minutes belong
+    to the slot they made good, not to the day they were finally run.
+
+    Everything in this module reconciles against slots -- a promised session is
+    a calendar date, and the whole engine asks which of those dates were kept.
+    So routing the make-up through here is the entire fix. A period the letter
+    reports on gets the minutes back, and the later period does not get to
+    count them a second time as though the promise for that week had been
+    exceeded.
+
+    Without it a district that missed three October sessions and honourably ran
+    three extra in November is told it still owes ninety minutes for October --
+    a demand it answers by forwarding its own November log, after which every
+    other figure in the letter is in doubt.
+    """
+    if event.delivered and event.makes_up_for is not None:
+        return event.makes_up_for
+    return event.event_date
+
+
 def _by_date(matched: list[ServiceEvent]) -> dict[date, list[ServiceEvent]]:
-    """Records grouped by the calendar date they speak about."""
+    """Records grouped by the promised session they speak about."""
     by_date: dict[date, list[ServiceEvent]] = {}
     for event in matched:
-        by_date.setdefault(event.event_date, []).append(event)
+        by_date.setdefault(_slot(event), []).append(event)
     return by_date
 
 
@@ -657,7 +681,7 @@ def _stated_reasons(matched: list[ServiceEvent]) -> list[StatedReason]:
     for event in matched:
         if event.delivered or not event.cause.is_stated:
             continue
-        seen.setdefault((event.cause, event.provenance), set()).add(event.event_date)
+        seen.setdefault((event.cause, event.provenance), set()).add(_slot(event))
 
     return [
         StatedReason(
@@ -763,7 +787,10 @@ def reconcile(
     if end < start:
         raise ValueError(f"window end {end} precedes start {start}")
 
-    in_window = [event for event in events if start <= event.event_date <= end]
+    # By slot, so a make-up run in November for an October session is inside an
+    # October window and outside a November one. The minutes follow the promise
+    # they were owed against.
+    in_window = [event for event in events if start <= _slot(event) <= end]
     shortfalls: list[ServiceShortfall] = []
 
     for obligations in _group_obligations(ledger).values():
@@ -789,7 +816,7 @@ def reconcile(
             event
             for event in in_window
             if canonical_service(event.service) == key
-            and _in_force(obligations, event.event_date)
+            and _in_force(obligations, _slot(event))
         ]
 
         deciding = _delivered_by_date(matched)
@@ -833,7 +860,7 @@ def reconcile(
         # and the other slots in that stretch are still slots nobody recorded
         # anything about.
         documented_dates = {
-            event.event_date
+            _slot(event)
             for event in matched
             if event.provenance in _DISTRICT_ANSWERABLE
         }
@@ -851,10 +878,10 @@ def reconcile(
         #
         # A date the district also records a delivery on is not a miss: the
         # delivery decides that date.
-        delivered_dates = {event.event_date for event in delivered}
+        delivered_dates = {_slot(event) for event in delivered}
         documented_miss_dates = (
             {
-                event.event_date
+                _slot(event)
                 for event in matched
                 if not event.delivered and event.provenance in _DISTRICT_ANSWERABLE
             }

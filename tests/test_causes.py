@@ -16,7 +16,7 @@ the forty rows around it. And a reason a parent wrote is not a reason the
 district wrote, which is the difference between a report and an admission.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -325,3 +325,149 @@ def test_the_sample_semester_reads_the_reasons_it_actually_contains():
     assert found[(SPEECH, MissCause.SCHOOL_ACTIVITY, Provenance.SCHOOL_CONFIRMED)] == 1
     # No district record ever gives a vacancy as the reason for a dated session.
     assert (SPEECH, MissCause.PROVIDER_VACANCY, Provenance.SCHOOL_CONFIRMED) not in found
+
+
+# ---------------------------------------------------------------------------
+# Make-ups: minutes are credited to the promise they were owed against.
+# ---------------------------------------------------------------------------
+
+from minutes.correspondence import MAKE_UP_LOOKBACK_DAYS, make_up_target_on  # noqa: E402
+
+OCT_6 = date(2026, 10, 6)
+NOV_12 = date(2026, 11, 12)
+
+
+def _term_ledger() -> IEPLedger:
+    """One speech session a week, October through November."""
+    return IEPLedger(
+        student_alias="Test S.",
+        school_year="2026-2027",
+        iep_date=date(2026, 9, 1),
+        obligations=[
+            ServiceObligation(
+                service=SPEECH,
+                minutes_per_session=30,
+                sessions_per_period=1,
+                period=Period.WEEK,
+                provider_role="Licensed Speech-Language Pathologist",
+                setting="therapy room",
+                start_date=OCT_6,
+                end_date=date(2026, 11, 30),
+                source_quote="30 minutes per session, once per week",
+            )
+        ],
+        deadlines=[],
+        accommodations=[],
+    )
+
+
+def _delivery(day: date, *, makes_up_for: date | None = None, source="email-1") -> ServiceEvent:
+    return ServiceEvent(
+        event_date=day,
+        service=SPEECH,
+        minutes=30,
+        delivered=True,
+        provenance=Provenance.SCHOOL_CONFIRMED,
+        source=source,
+        makes_up_for=makes_up_for,
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("We made up the speech session she missed on 10/6 today.", OCT_6),
+        ("Today's session was a make-up for Tuesday 10/6.", OCT_6),
+        ("We rescheduled the 10/6 session and ran it today.", OCT_6),
+    ],
+)
+def test_a_delivered_make_up_names_the_session_it_makes_good(body, expected):
+    item = _item(body, received=NOV_12)
+    assert make_up_target_on(item, NOV_12) == expected
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # Every one of these is in the shipped semester, and none of them is a
+        # session. A promise read as a delivery erases a real shortfall with a
+        # sentence the district never had to honour.
+        "I have a make-up slot Friday at 1:15 - let me know if that works for her schedule.",
+        "I will try to make up Maya's session next week if the schedule allows.",
+        "I do not have a make-up slot this week - my Thursday and Friday are evaluations.",
+        # A make-up with no session named: credits nothing, because crediting
+        # the wrong miss is worse than crediting none.
+        "We made up a missed session today.",
+    ],
+)
+def test_an_offered_make_up_is_not_a_delivered_one(body):
+    assert make_up_target_on(_item(body, received=NOV_12), NOV_12) is None
+
+
+def test_two_candidate_dates_in_one_sentence_credit_nothing():
+    body = "Today we made up the sessions missed on 10/6 and 10/13."
+    assert make_up_target_on(_item(body, received=NOV_12), NOV_12) is None
+
+
+def test_a_make_up_beyond_the_lookback_is_not_read():
+    """A session made good five months later is a different conversation."""
+    long_ago = NOV_12 - timedelta(days=MAKE_UP_LOOKBACK_DAYS + 7)
+    body = f"Today we made up the session missed on {long_ago.month}/{long_ago.day}."
+    assert make_up_target_on(_item(body, received=NOV_12), NOV_12) is None
+
+
+def test_a_make_up_pays_back_the_period_it_was_owed_to():
+    """The failure this exists to prevent.
+
+    Three October sessions missed, three extra run in November to make them
+    good. Reported on October, the naive ledger still demands ninety minutes --
+    a demand the district answers by forwarding its own November log, after
+    which every other figure in the letter is in doubt.
+    """
+    ledger = _term_ledger()
+    october = [_miss(OCT_6), _miss(date(2026, 10, 13)), _miss(date(2026, 10, 20))]
+    make_ups = [
+        _delivery(NOV_12, makes_up_for=OCT_6, source="email-a"),
+        _delivery(date(2026, 11, 13), makes_up_for=date(2026, 10, 13), source="email-b"),
+        _delivery(date(2026, 11, 14), makes_up_for=date(2026, 10, 20), source="email-c"),
+    ]
+
+    line = reconcile(ledger, october + make_ups, OCT_6, date(2026, 10, 31)).shortfalls[0]
+    assert line.delivered_minutes == 90
+    assert line.shortfall_minutes == 0, "the minutes came back; nothing is owed for October"
+
+
+def test_a_make_up_is_not_also_counted_in_the_month_it_was_run():
+    """Otherwise the same thirty minutes pay for two different weeks."""
+    ledger = _term_ledger()
+    events = [_miss(OCT_6), _delivery(NOV_12, makes_up_for=OCT_6)]
+
+    november = reconcile(ledger, events, date(2026, 11, 1), date(2026, 11, 30)).shortfalls[0]
+    assert november.delivered_minutes == 0, (
+        "November's own promise was not met by a session that paid off October"
+    )
+    assert november.shortfall_minutes == november.owed_minutes
+
+
+def test_an_ordinary_delivery_still_counts_where_it_happened():
+    """The credit is opt-in and record-driven; nothing else moves."""
+    ledger = _term_ledger()
+    events = [_miss(OCT_6), _delivery(NOV_12)]
+
+    october = reconcile(ledger, events, OCT_6, date(2026, 10, 12)).shortfalls[0]
+    november = reconcile(ledger, events, date(2026, 11, 9), date(2026, 11, 15)).shortfalls[0]
+    assert october.owed_minutes == 30
+    assert october.delivered_minutes == 0 and october.shortfall_minutes == 30
+    assert november.delivered_minutes == 30, "an unlabelled session pays for the week it was run"
+
+
+def test_a_make_up_retires_the_slot_it_filled_rather_than_leaving_it_undocumented():
+    """The district's own record decides the date, and a make-up is that record."""
+    ledger = _term_ledger()
+    events = [_miss(OCT_6), _delivery(NOV_12, makes_up_for=OCT_6)]
+
+    line = reconcile(ledger, events, OCT_6, date(2026, 10, 12)).shortfalls[0]
+    assert line.owed_minutes == 30
+    assert line.delivered_minutes == 30
+    assert line.shortfall_minutes == 0
+    assert line.undocumented_minutes == 0

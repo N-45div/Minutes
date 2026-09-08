@@ -173,6 +173,14 @@ class ServiceEvent(BaseModel):
         default=MissCause.UNSTATED,
         description="The reason the source record gives for a miss; descriptive, never a finding",
     )
+    makes_up_for: date | None = Field(
+        default=None,
+        description=(
+            "For a delivery the record calls a make-up: the earlier date whose session it makes "
+            "good. Reconciliation credits the minutes to that date, not to the day they were "
+            "delivered."
+        ),
+    )
 
 
 class Accommodation(BaseModel):

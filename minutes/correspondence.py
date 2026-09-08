@@ -333,7 +333,7 @@ def load_cached_events(name: str = "maya_fall_2026") -> list[ServiceEvent]:
     return attributed(events, items)
 
 
-DERIVED_FIELDS = frozenset({"attribution", "cause"})
+DERIVED_FIELDS = frozenset({"attribution", "cause", "makes_up_for"})
 """Fields recomputed on every read, and therefore never written to the cache.
 
 The cache holds what the classifier read. Attribution and the stated cause are
@@ -911,6 +911,73 @@ _CAUSE_PATTERNS: tuple[tuple[MissCause, "re.Pattern[str]"], ...] = (
 )
 
 
+# A session run late to make good an earlier one. Two markers have to be
+# present in the same sentence -- that this session was a make-up, and WHICH
+# session it made up -- because a make-up with no target credits nothing and
+# guessing the target is how a delivery would be used to cancel the wrong miss.
+#
+# Deliberately not matched: the offer. "I have a make-up slot Friday at 1:15"
+# and "I will try to make up her session next week if the schedule allows" are
+# both in the shipped semester, and neither is a delivered session. A promise
+# read as a delivery would erase a real shortfall with a sentence the district
+# never had to honour.
+_MAKE_UP = re.compile(
+    r"\b(?:made\s+up|make-?up|makeup|rescheduled|caught\s+up\s+on|doubled\s+up)\b",
+    re.IGNORECASE,
+)
+
+# An offer, an intention or a refusal -- present tense about a session that has
+# not happened. Any of these in the sentence and the make-up is not a delivery.
+_MAKE_UP_NOT_YET = re.compile(
+    r"\b(?:will|shall|going\s+to|hope|hoping|plan|planning|try|trying|plan\s+to|plans\s+to"
+    r"|plan\s+on|plans\s+on|intend|plan\s+for|if|plan\b|would|could|plan)\b"
+    r"|\b(?:do\s+not|don'?t|no)\s+have\b"
+    r"|\bhave\s+a\s+make-?up\s+slot\b"
+    r"|\bslot\b|\bavailable\b|\blet\s+me\s+know\b|\bunable\b",
+    re.IGNORECASE,
+)
+
+# How far back a make-up may reach. A term, not a year: a session made good
+# five months later is a different conversation from a rescheduled Tuesday, and
+# should not silently cancel a shortfall the letter already reported.
+MAKE_UP_LOOKBACK_DAYS = 120
+
+
+def make_up_target_on(item: Correspondence, day: date) -> date | None:
+    """The earlier date a delivery on ``day`` is recorded as making good.
+
+    ``None`` unless one sentence carries the whole claim: that this session was
+    a make-up, that it happened rather than being offered, and which date it
+    made good. The target must resolve to exactly one earlier day, under the
+    same grounding every other date in this module clears; two candidate dates
+    in one sentence resolve to nothing, because crediting the wrong miss is
+    worse than crediting none.
+    """
+    earliest = day - timedelta(days=MAKE_UP_LOOKBACK_DAYS)
+
+    for line in _lines(item):
+        if not _MAKE_UP.search(line):
+            continue
+        for sentence in _SENTENCE_SPLIT.split(line):
+            if not _MAKE_UP.search(sentence) or _MAKE_UP_NOT_YET.search(sentence):
+                continue
+            targets = [
+                candidate
+                for candidate in _days_between(earliest, day - timedelta(days=1))
+                if _sentence_names_day(sentence, item, candidate)
+            ]
+            if len(targets) == 1:
+                return targets[0]
+    return None
+
+
+def _days_between(first: date, last: date) -> Iterator[date]:
+    current = first
+    while current <= last:
+        yield current
+        current += timedelta(days=1)
+
+
 def stated_cause_on(item: Correspondence, day: date) -> MissCause:
     """The reason this item gives for a miss on ``day``, or ``UNSTATED``.
 
@@ -1012,10 +1079,31 @@ def attributed(
             if item is not None and not event.delivered
             else MissCause.UNSTATED
         )
-        if event.attribution is attribution and event.cause is cause:
+        # The mirror of the cause: a cause explains a session that did not
+        # happen, a make-up target says which earlier one a session that did
+        # happen makes good. Both are derived here, on the same pass, from the
+        # event's own source document.
+        makes_up_for = (
+            make_up_target_on(item, event.event_date)
+            if item is not None and event.delivered
+            else None
+        )
+        if (
+            event.attribution is attribution
+            and event.cause is cause
+            and event.makes_up_for == makes_up_for
+        ):
             stamped.append(event)
         else:
-            stamped.append(event.model_copy(update={"attribution": attribution, "cause": cause}))
+            stamped.append(
+                event.model_copy(
+                    update={
+                        "attribution": attribution,
+                        "cause": cause,
+                        "makes_up_for": makes_up_for,
+                    }
+                )
+            )
     return stamped
 
 
