@@ -101,6 +101,64 @@ class Attribution(str, Enum):
     STUDENT_ABSENCE = "student_absence"
 
 
+class MissCause(str, Enum):
+    """What the source record gives as the reason a session did not happen.
+
+    Deliberately a separate field from :class:`Attribution`, because the two
+    answer different questions and only one of them is allowed to move money.
+
+    ``Attribution`` decides whether minutes leave what the family asks for. It
+    is binary, narrow, and load-bearing, and it stays that way.
+
+    ``MissCause`` decides nothing. It reports the reason the document itself
+    gives, so that a letter can say which sentence of the district's own mail
+    accounts for which missing minutes. That distinction is worth the extra
+    field: today every miss the district is answerable for looks identical in
+    the ledger, so six weeks of a vacant speech-language post — the strongest
+    fact a parent can hold — reads exactly like a week nobody wrote about.
+
+    What it is NOT is a legal conclusion. There is no blanket rule in IDEA that
+    a missed session must be made up; OSEP's framing (Letter to Clarke, 48
+    IDELR 77) is whether the interruption denied the child a free appropriate
+    public education, which is an individual determination and not one a
+    document assembler gets to make. So these values are used to *describe* and
+    to *cite*, never to assert that anything is owed. The arithmetic that says
+    what is owed is the IEP's own stated frequency and duration, and it is
+    unchanged by anything here.
+
+    UNSTATED is the default and the honest common case: most records that
+    report a miss give no reason at all.
+    """
+
+    UNSTATED = "unstated"
+    STUDENT_ABSENT = "student_absent"
+    PROVIDER_ABSENT = "provider_absent"
+    PROVIDER_VACANCY = "provider_vacancy"
+    SCHOOL_CLOSURE = "school_closure"
+    SCHOOL_ACTIVITY = "school_activity"
+    TESTING = "testing"
+
+    @property
+    def is_stated(self) -> bool:
+        return self is not MissCause.UNSTATED
+
+    @property
+    def phrase(self) -> str:
+        """How this reads in a sentence describing the district's own record."""
+        return _CAUSE_PHRASES[self]
+
+
+_CAUSE_PHRASES: dict["MissCause", str] = {
+    MissCause.UNSTATED: "no reason recorded",
+    MissCause.STUDENT_ABSENT: "the student was absent",
+    MissCause.PROVIDER_ABSENT: "the provider was absent",
+    MissCause.PROVIDER_VACANCY: "the position was vacant or unfilled",
+    MissCause.SCHOOL_CLOSURE: "the school was closed",
+    MissCause.SCHOOL_ACTIVITY: "a school activity displaced the session",
+    MissCause.TESTING: "testing displaced the session",
+}
+
+
 class ServiceEvent(BaseModel):
     """One observed delivery or non-delivery fact."""
 
@@ -111,6 +169,10 @@ class ServiceEvent(BaseModel):
     provenance: Provenance
     source: str = Field(description="Where this fact came from, e.g. an email id, a parent log entry, a records-request id")
     attribution: Attribution = Attribution.SCHOOL_OR_UNRECORDED
+    cause: MissCause = Field(
+        default=MissCause.UNSTATED,
+        description="The reason the source record gives for a miss; descriptive, never a finding",
+    )
 
 
 class Accommodation(BaseModel):
@@ -170,6 +232,24 @@ class Correspondence(BaseModel):
     body: str
 
 
+class StatedReason(BaseModel):
+    """One reason the records give for missed sessions of a service, counted.
+
+    Carries ``evidence_grade`` because who wrote the reason changes entirely
+    what may be said about it. "The district's own record gives the reason" and
+    "your note gives the reason" are different sentences with different weight,
+    and a letter that blurred them would claim the district said something it
+    did not. In the shipped sample every vacancy row is PARENT_OBSERVED, which
+    is exactly the case that would be misreported by a model that dropped this
+    field.
+    """
+
+    cause: MissCause
+    evidence_grade: Provenance
+    sessions: int = Field(ge=1, description="Missed sessions this reason is written against")
+    dates: list[date] = Field(description="The dates, oldest first; each one is citable")
+
+
 class ServiceShortfall(BaseModel):
     """Owed minus delivered for one service over one period."""
 
@@ -187,6 +267,13 @@ class ServiceShortfall(BaseModel):
     school_confirmed_minutes: int = Field(ge=0)
     parent_observed_minutes: int = Field(ge=0)
     undocumented_minutes: int = Field(ge=0, description="Owed minutes with no evidence either way")
+    stated_reasons: list[StatedReason] = Field(
+        default_factory=list,
+        description=(
+            "Reasons the records give for missed sessions in this window. Descriptive: no minute "
+            "in any other field moves because of anything here."
+        ),
+    )
     evidence: list[EvidenceRef]
 
 

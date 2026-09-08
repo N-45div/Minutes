@@ -1137,6 +1137,10 @@ class TestCachedEvents:
 
         assert stamped  # the payload really is dropping something
         assert all("attribution" not in row for row in cache_payload(events))
+        assert all("cause" not in row for row in cache_payload(events)), (
+            "the stated reason is derived on read too, and freezing it would ship "
+            "whatever the cause patterns happened to be the day the classifier ran"
+        )
         assert cache_payload(events) == json.loads(CACHE.read_text(encoding="utf-8"))
 
     def test_the_cache_is_refused_without_the_correspondence_it_was_read_from(self, tmp_path, monkeypatch):

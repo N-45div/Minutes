@@ -84,12 +84,14 @@ from .models import (
     Attribution,
     EvidenceRef,
     IEPLedger,
+    MissCause,
     Period,
     Provenance,
     ReconciliationResult,
     ServiceEvent,
     ServiceObligation,
     ServiceShortfall,
+    StatedReason,
 )
 
 __all__ = [
@@ -626,6 +628,51 @@ def _excused_dates(matched: list[ServiceEvent]) -> set[date]:
     }
 
 
+# Strongest record first, so a caller that shows only the leading reason shows
+# the district's own words rather than the family's.
+_GRADE_ORDER: dict[Provenance, int] = {
+    Provenance.SCHOOL_CONFIRMED: 0,
+    Provenance.PARENT_OBSERVED: 1,
+    Provenance.DOCUMENTED_SILENCE: 2,
+}
+
+
+def _stated_reasons(matched: list[ServiceEvent]) -> list[StatedReason]:
+    """Group this service's missed sessions by the reason their records give.
+
+    Grouped by reason AND by evidence grade, never by reason alone, because the
+    sentence a letter can build differs completely between the two: the
+    district writing that the post was vacant is an admission, and a parent
+    writing it is a report. Collapsing them would let the second be presented
+    as the first.
+
+    One session per date, so a date carrying both a district email and the
+    parent's note about the same miss is not counted twice within a grade.
+
+    This is a description of the evidence, not an input to it. Nothing in the
+    arithmetic above reads it, which is what lets the reason patterns be
+    widened later without a single minute moving.
+    """
+    seen: dict[tuple[MissCause, Provenance], set[date]] = {}
+    for event in matched:
+        if event.delivered or not event.cause.is_stated:
+            continue
+        seen.setdefault((event.cause, event.provenance), set()).add(event.event_date)
+
+    return [
+        StatedReason(
+            cause=cause,
+            evidence_grade=grade,
+            sessions=len(dates),
+            dates=sorted(dates),
+        )
+        for (cause, grade), dates in sorted(
+            seen.items(),
+            key=lambda kv: (-len(kv[1]), _GRADE_ORDER[kv[0][1]], kv[0][0].value),
+        )
+    ]
+
+
 def reconcile(
     ledger: IEPLedger, events: list[ServiceEvent], start: date, end: date
 ) -> ReconciliationResult:
@@ -824,6 +871,8 @@ def reconcile(
             math.ceil(sessions_undocumented * per_session),
         )
 
+        stated_reasons = _stated_reasons(matched)
+
         shortfalls.append(
             ServiceShortfall(
                 service=obligations[0].service,
@@ -836,6 +885,7 @@ def reconcile(
                 school_confirmed_minutes=school_confirmed,
                 parent_observed_minutes=parent_observed,
                 undocumented_minutes=undocumented_minutes,
+                stated_reasons=stated_reasons,
                 evidence=[
                     _evidence_ref(event)
                     for event in sorted(matched, key=lambda e: (e.event_date, e.source))

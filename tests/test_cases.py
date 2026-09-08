@@ -397,6 +397,7 @@ def test_a_note_is_a_parent_observed_event_and_the_words_the_parent_wrote(extrac
         "provenance": "parent_observed",
         "source": "note-2026-10-06-01",
         "attribution": "school_or_unrecorded",
+        "cause": "unstated",
     }
     assert out["item"]["item_id"] == "note-2026-10-06-01" and out["item"]["kind"] == "parent_log"
     assert out["item"]["sender"] == "parent" and out["item"]["body"] == "10/6 she says no speech today"

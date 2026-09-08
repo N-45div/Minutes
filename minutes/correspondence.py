@@ -90,6 +90,7 @@ from .models import (
     Correspondence,
     CorrespondenceKind,
     IEPLedger,
+    MissCause,
     Provenance,
     ServiceEvent,
     ServiceObligation,
@@ -332,15 +333,15 @@ def load_cached_events(name: str = "maya_fall_2026") -> list[ServiceEvent]:
     return attributed(events, items)
 
 
-DERIVED_FIELDS = frozenset({"attribution"})
+DERIVED_FIELDS = frozenset({"attribution", "cause"})
 """Fields recomputed on every read, and therefore never written to the cache.
 
-The cache holds what the classifier read. Attribution is what a deterministic
-rule makes of it, and freezing that alongside the readings would put the rule
-of the day the classifier ran into a committed artifact: tighten the absence
-rule afterwards and the source improves while the shipped cache goes on
-excusing the same minutes. So the writer drops it and
-:func:`load_cached_events` derives it back.
+The cache holds what the classifier read. Attribution and the stated cause are
+what deterministic rules make of it, and freezing those alongside the readings
+would put the rules of the day the classifier ran into a committed artifact:
+tighten the absence rule afterwards and the source improves while the shipped
+cache goes on excusing the same minutes. So the writer drops both and
+:func:`load_cached_events` derives them back.
 """
 
 
@@ -826,6 +827,142 @@ def reports_student_absence_on(item: Correspondence, day: date) -> bool:
     return any(_sentence_names_day(sentence, item, day) for sentence in _absence_sentences(item))
 
 
+# ---------------------------------------------------------------------------
+# The reason a record gives, as opposed to the reason a reader infers.
+#
+# Every miss the district is answerable for currently looks identical in the
+# ledger, which flattens the single most answerable kind: a term in which the
+# post sat vacant and the service simply stopped. The cause is read under
+# exactly the rule the absence stamp uses, and for the same reasons: one
+# sentence has to carry both halves, the reason AND the day, because a service
+# log is one document spanning a semester and a reason written in one row says
+# nothing about the forty rows around it.
+#
+# The patterns are narrow on purpose and asymmetric on purpose. Naming a cause
+# the record does not give is the expensive error -- it puts a sentence in a
+# letter that the district can deny out of its own files -- while missing one
+# costs only a sentence the letter would have been stronger for. So a phrase
+# that could plausibly be either reads as UNSTATED, which is what most records
+# honestly are.
+# ---------------------------------------------------------------------------
+
+# Ordered: the first pattern whose sentence also names the day wins. Staffing
+# comes before displacement because "the SLP is out and the assembly ran long"
+# is a staffing sentence with a detail attached.
+_CAUSE_PATTERNS: tuple[tuple[MissCause, "re.Pattern[str]"], ...] = (
+    (
+        MissCause.PROVIDER_VACANCY,
+        re.compile(
+            r"\b(?:position|post|role|vacancy|caseload)\b[^.\n]{0,40}?"
+            r"\b(?:vacant|unfilled|open|not\s+(?:yet\s+)?filled)\b"
+            r"|\b(?:vacant|unfilled)\b[^.\n]{0,30}?"
+            r"\b(?:position|post|role|slp|therapist|provider|pathologist)\b"
+            r"|\bno\s+(?:current\s+|permanent\s+|assigned\s+|new\s+)?"
+            r"(?:speech\s+|reading\s+)?"
+            r"(?:slp|therapist|provider|pathologist|specialist|clinician|teacher)\b"
+            r"(?:\s+(?:on\s+staff|assigned|available|in\s+place|now|anymore|at\s+all|yet))?"
+            r"|\bhave\s+not\s+(?:been\s+able\s+to\s+)?(?:hire|fill|replace)\b"
+            r"|\b(?:awaiting|pending)\s+(?:a\s+)?(?:hire|replacement|new\s+provider)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        MissCause.PROVIDER_ABSENT,
+        re.compile(
+            r"\b(?:therapist|provider|slp|pathologist|ot|pt|counselor|counsellor|psychologist"
+            r"|teacher|specialist|clinician|staff\s+member)\b[^.\n]{0,40}?"
+            r"\b(?:was\s+)?(?:absent|out\s+sick|out\s+today|out\s+all\s+week|called\s+out"
+            r"|on\s+leave|unavailable|not\s+in|off\s+sick)\b"
+            r"|\b(?:coverage|substitute|sub)\s+(?:was\s+)?(?:not|un)available\b"
+            r"|\bno\s+(?:coverage|substitute|sub)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        MissCause.TESTING,
+        re.compile(
+            r"\b(?:state|standardized|district|benchmark|mandated)\s+(?:testing|tests|assessments?)\b"
+            r"|\btesting\s+(?:window|schedule|week|day)\b"
+            r"|\b(?:nwea|map\s+testing|regents|staar|parcc|smarter\s+balanced)\b"
+            r"|\b(?:for|due\s+to|because\s+of)\s+(?:state\s+)?testing\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        MissCause.SCHOOL_CLOSURE,
+        re.compile(
+            r"\b(?:school|building|district)\s+(?:was\s+)?closed\b"
+            r"|\b(?:snow|weather|emergency)\s+day\b"
+            r"|\b(?:no\s+school|school\s+holiday|winter\s+break|spring\s+break)\b"
+            r"|\b(?:staff|professional)\s+(?:development|training)\s+day\b"
+            r"|\bpd\s+day\b|\bin-?service\s+day\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        MissCause.SCHOOL_ACTIVITY,
+        re.compile(
+            r"\b(?:assembly|field\s+trip|fire\s+drill|lockdown\s+drill|picture\s+day"
+            r"|pep\s+rally|class\s+party|school\s+event|special\s+event)\b"
+            r"|\b(?:pulled|out)\s+for\s+(?:an?\s+)?(?:assembly|field\s+trip|event)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def stated_cause_on(item: Correspondence, day: date) -> MissCause:
+    """The reason this item gives for a miss on ``day``, or ``UNSTATED``.
+
+    The child's own absence is checked first and wins outright, so this can
+    never contradict the attribution stamp: if the arithmetic excused the
+    session because the record said the child was away, the reason printed
+    beside it says the same thing.
+
+    Everything else is read from a single sentence that must both give the
+    reason and name the day, under :func:`_sentence_names_day` -- the same
+    grounding a delivery fact and an absence both have to clear.
+    """
+    if reports_student_absence_on(item, day):
+        return MissCause.STUDENT_ABSENT
+
+    for cause, pattern in _CAUSE_PATTERNS:
+        for line in _lines(item):
+            # The same gate delivery facts clear: a line that never mentions a
+            # session or an encounter is not talking about one. Without it,
+            # "Today's assembly schedule is attached" reads as an assembly
+            # having displaced a session, which is a sentence no record made.
+            if not _SESSION_MENTION.search(line):
+                continue
+            if any(
+                pattern.search(sentence) and _sentence_names_day(sentence, item, day)
+                for sentence in _SENTENCE_SPLIT.split(line)
+            ):
+                return cause
+            if _is_row_for(line, item, day) and pattern.search(line):
+                return cause
+    return MissCause.UNSTATED
+
+
+def _is_row_for(line: str, item: Correspondence, day: date) -> bool:
+    """Is this line a log row whose own date is ``day``?
+
+    A service log writes one session per line and puts the date at the front:
+    ``11/10 speech - not held. The SLP position is vacant.`` The date and the
+    reason are then in different sentences of the same row, so a
+    sentence-scoped rule reads the row as giving no reason at all -- which is
+    the exact shape of record this feature exists to read.
+
+    Widening from the sentence to the line is only safe where the line is a
+    row, so that is what is required: the FIRST sentence must name the day.
+    That keeps a reason inside the row that is dated to it and stops it
+    reaching the forty rows around it, which is the failure that would let one
+    line about a vacancy re-caption a whole semester.
+    """
+    head = _SENTENCE_SPLIT.split(line)[0]
+    return _sentence_names_day(head, item, day)
+
+
 def attributed(
     events: list[ServiceEvent],
     items: list[Correspondence],
@@ -866,11 +1003,19 @@ def attributed(
         attribution = (
             Attribution.STUDENT_ABSENCE if excused else Attribution.SCHOOL_OR_UNRECORDED
         )
-        stamped.append(
-            event
-            if event.attribution is attribution
-            else event.model_copy(update={"attribution": attribution})
+        # The reason rides along on the same pass and under the same rule, and
+        # like the attribution it is re-derived rather than trusted: an event
+        # arriving already stamped from a cache is reset to what its own
+        # document supports today.
+        cause = (
+            stated_cause_on(item, event.event_date)
+            if item is not None and not event.delivered
+            else MissCause.UNSTATED
         )
+        if event.attribution is attribution and event.cause is cause:
+            stamped.append(event)
+        else:
+            stamped.append(event.model_copy(update={"attribution": attribution, "cause": cause}))
     return stamped
 
 
