@@ -471,3 +471,119 @@ def test_a_make_up_retires_the_slot_it_filled_rather_than_leaving_it_undocumente
     assert line.delivered_minutes == 30
     assert line.shortfall_minutes == 0
     assert line.undocumented_minutes == 0
+
+
+# ---------------------------------------------------------------------------
+# Where a reason is allowed to be seen.
+#
+# The engine knowing something and a parent seeing it are different facts, and
+# for most of a day this feature had the first without the second.
+# ---------------------------------------------------------------------------
+
+from minutes.deadlines import evaluate_deadlines  # noqa: E402
+from minutes.letters import compile_shortfall_notice, validate_letter  # noqa: E402
+from minutes.statement import build_statement, render_markdown  # noqa: E402
+from minutes.tools import load_case_record  # noqa: E402
+
+TERM_START = date(2026, 9, 1)
+TERM_END = date(2027, 1, 29)
+
+
+def _sample_reconciliation():
+    case = load_case_record()
+    return case.ledger, reconcile(case.ledger, case.events, TERM_START, TERM_END)
+
+
+def test_the_letter_states_a_district_reason_as_the_districts_own():
+    ledger, result = _sample_reconciliation()
+    body = compile_shortfall_notice(ledger, result, today=date(2027, 2, 1)).body
+
+    assert (
+        "District records give as the reason for 1 session not held on 2026-09-24 "
+        "that a school activity displaced the session." in body
+    )
+
+
+def test_the_letter_attributes_a_family_reason_to_the_family():
+    """The sentence that would put words in the district's mouth if it did not.
+
+    Every record explaining the December weeks is the parent's own note, so
+    this is the exact case a letter must not overstate.
+    """
+    ledger, result = _sample_reconciliation()
+    body = compile_shortfall_notice(ledger, result, today=date(2027, 2, 1)).body
+
+    assert (
+        "We recorded at home that the position was vacant for 2 sessions not held on "
+        "2026-12-08 and 2026-12-10; that is our observation and not a district record." in body
+    )
+    assert "District records give as the reason" in body
+    assert "District records give as the reason for 2 sessions" not in body
+
+
+def test_the_letter_draws_no_conclusion_from_a_reason():
+    ledger, result = _sample_reconciliation()
+    letter = compile_shortfall_notice(ledger, result, today=date(2027, 2, 1))
+
+    assert "I am not drawing a conclusion from those reasons." in letter.body
+    for forbidden in ("must be made up", "is owed", "required to make up", "entitled to"):
+        assert forbidden not in letter.body, f"a reason may not become a legal conclusion: {forbidden!r}"
+    assert validate_letter(letter) == [], "every reason sentence carries its own footnote"
+
+
+def test_a_reason_sentence_cites_only_the_dates_it_names():
+    """A footnote has to support the sentence it hangs from, and no more."""
+    from minutes.letters import _reason_refs
+    from minutes.reconcile import evidence_date
+
+    _, result = _sample_reconciliation()
+    line = next(line for line in result.shortfalls if line.service.startswith("Speech"))
+    reason = next(r for r in line.stated_reasons if r.cause is MissCause.PROVIDER_VACANCY)
+
+    refs = _reason_refs(line, reason)
+    assert refs, "the sentence would not compile without them"
+    assert {evidence_date(ref) for ref in refs} == set(reason.dates)
+    assert all(ref.provenance is reason.evidence_grade for ref in refs)
+
+
+def test_the_statement_shows_the_reasons_and_who_wrote_them():
+    ledger, result = _sample_reconciliation()
+    statement = build_statement(
+        ledger, result, evaluate_deadlines(ledger, date(2027, 2, 1)), [], []
+    )
+    rendered = render_markdown(statement)
+
+    assert "What the records give as the reason" in rendered
+    assert "| Speech-Language Therapy | The position was vacant | 2 | you |" in rendered
+    assert "A school activity displaced the session | 1 | the district |" in rendered
+
+
+def test_a_statement_with_nothing_explained_shows_no_reason_section():
+    """The common case. A section of nothing is noise in a forwarded document."""
+    ledger = _term_ledger()
+    result = reconcile(ledger, [_miss(OCT_6)], OCT_6, date(2026, 10, 12))
+    statement = build_statement(ledger, result, [], [], [])
+
+    assert "What the records give as the reason" not in render_markdown(statement)
+
+
+def test_the_caseworker_can_see_the_reasons_and_that_they_are_only_reasons():
+    from minutes.tools import reconcile_services
+
+    out = reconcile_services(start=TERM_START.isoformat(), end=TERM_END.isoformat())
+    speech = next(row for row in out["services"] if row["service"].startswith("Speech"))
+    reasons = {r["reason"]: r for r in speech["reasons_the_records_give"]}
+
+    assert reasons["the position was vacant"]["written_by"] == "the family"
+    assert reasons["the position was vacant"]["sessions"] == 2
+    assert reasons["a school activity displaced the session"]["written_by"] == "the district"
+
+
+def test_a_make_up_footnote_says_which_session_it_paid_for():
+    """Otherwise a November delivery inside an October total reads as an error."""
+    ledger = _term_ledger()
+    events = [_miss(OCT_6), _delivery(NOV_12, makes_up_for=OCT_6)]
+
+    line = reconcile(ledger, events, OCT_6, date(2026, 10, 12)).shortfalls[0]
+    details = " ".join(ref.detail for ref in line.evidence)
+    assert "recorded as making up the session of 2026-10-06 and counted against that date" in details

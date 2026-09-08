@@ -481,7 +481,12 @@ def test_shortfall_notice_carries_the_period_arithmetic():
     assert letter["kind"] == "shortfall_notice"
     assert letter["integrity_violations"] == []
     assert letter["ready_to_send"] is True
-    assert letter["citations"]["count"] == 42
+    # 42 before the letter stated the reasons the records give, and four more
+    # since: the district's own emails explain 2026-09-24 (speech) and
+    # 2026-11-18 (OT) as a school activity, and the parent's December notes
+    # explain 2026-12-08 and 2026-12-10 as the post being vacant. Each of those
+    # four sentences hangs from the record it was read out of.
+    assert letter["citations"]["count"] == 46
 
 
 def test_escalating_compiles_a_compensatory_request_instead():
@@ -543,14 +548,21 @@ def test_the_letter_is_dated_today_and_not_the_end_of_the_period_it_reports():
 
 
 def test_letter_citations_are_summarized_by_evidence_grade():
-    """Forty-two evidence records would not change the model's next move; the
-    split that decides how strongly the letter may speak is three numbers."""
+    """Forty-six evidence records would not change the model's next move; the
+    split that decides how strongly the letter may speak is three numbers.
+
+    The parent-observed count is the one worth watching. It rose from one to
+    three when the letter began stating reasons, because the only records
+    explaining the December weeks are the family's own notes -- so those two
+    sentences are attributed to the family in the letter, and would be a claim
+    about what the district said if this split were ever collapsed.
+    """
     letter = _call(draft_shortfall_letter, start=TERM_START, end=TERM_END, today=TODAY)["letter"]
     grades = letter["citations"]["by_evidence_grade"]
 
     assert sum(grades.values()) == letter["citations"]["count"]
-    assert grades["school_confirmed"] == 41
-    assert grades["parent_observed"] == 1
+    assert grades["school_confirmed"] == 43
+    assert grades["parent_observed"] == 3
 
 
 def test_the_letter_body_is_returned_whole_because_it_is_the_artifact():

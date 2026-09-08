@@ -79,12 +79,14 @@ from .models import (
     Letter,
     LetterCitation,
     LetterKind,
+    MissCause,
     Provenance,
     ReconciliationResult,
     RecordsRequest,
     RequestState,
     ServiceObligation,
     ServiceShortfall,
+    StatedReason,
 )
 from .reconcile import ABSENCE_NOTE, NON_DELIVERY_NOTE, evidence_date
 
@@ -577,6 +579,79 @@ def _absence_dates(refs: Sequence[EvidenceRef]) -> list[date]:
     return sorted({day for ref in refs if (day := evidence_date(ref)) is not None})
 
 
+def _reason_refs(line: ServiceShortfall, reason: StatedReason) -> list[EvidenceRef]:
+    """The records behind one stated reason, on the dates it was written about.
+
+    Selected by grade AND by date, so a footnote can only support the sessions
+    the sentence above it actually names.
+    """
+    return [
+        ref
+        for ref in _by_provenance(line.evidence, reason.evidence_grade)
+        if (day := evidence_date(ref)) is not None and day in set(reason.dates)
+    ]
+
+
+def _reason_sentences(draft: _Draft, line: ServiceShortfall) -> list[str]:
+    """Say what the records give as the reason, and who gave it.
+
+    This is the sentence the whole taxonomy exists for. Without it every miss
+    the district is answerable for reads alike, and a term in which the post
+    sat vacant is indistinguishable from a term nobody wrote about.
+
+    Three rules hold it inside what this product may say.
+
+    It reports rather than concludes. There is no blanket rule in IDEA that a
+    missed session must be made up -- OSEP's framing is whether the
+    interruption denied the child a free appropriate public education, an
+    individual determination -- so the letter names the reason the record gives
+    and asks the district about it. It never says the minutes are therefore
+    owed. Nothing in the arithmetic above changed because of any reason here.
+
+    It attributes. The district writing that the post was vacant is one thing
+    and a parent writing it is another, and the sentence says which. In the
+    shipped semester every vacancy record is the family's, so a sentence that
+    blurred the two would put words in the district's mouth on the strongest
+    claim in the letter.
+
+    It skips the child's absence, which :func:`_excused_sentences` has already
+    stated in the paragraph above, along with the minutes given up for it.
+    Saying it twice would read as two separate concessions.
+    """
+    sentences: list[str] = []
+    for reason in line.stated_reasons:
+        if reason.cause is MissCause.STUDENT_ABSENT:
+            continue
+        refs = _reason_refs(line, reason)
+        if not refs:
+            continue
+
+        sessions = f"{reason.sessions} session" + ("s" if reason.sessions != 1 else "")
+        where = _dates_phrase(sorted(reason.dates))
+        if reason.evidence_grade is Provenance.SCHOOL_CONFIRMED:
+            claim = (
+                f"District records give as the reason for {sessions} not held {where} "
+                f"that {reason.cause.phrase}."
+            )
+        else:
+            claim = (
+                f"We recorded at home that {reason.cause.phrase} for {sessions} not held "
+                f"{where}; that is our observation and not a district record."
+            )
+        stated = draft.cite(claim, refs)
+        if stated:
+            sentences.append(stated)
+
+    if sentences:
+        sentences.append(
+            draft.derived(
+                "I am not drawing a conclusion from those reasons. I am asking the district to confirm "
+                "or correct them, and to tell me whether it treats any of the sessions above as owed."
+            )
+        )
+    return sentences
+
+
 def _excused_sentences(draft: _Draft, ledger: IEPLedger, line: ServiceShortfall) -> list[str]:
     """State the minutes excluded for absence, and what they rest on.
 
@@ -825,11 +900,24 @@ def _reconciliation_blocks(draft: _Draft, ledger: IEPLedger, result: Reconciliat
                 "our records rather than what took place at school."
             )
 
+        # After the undocumented count and before the totals: a reason
+        # describes part of the difference the sentences above have just
+        # measured, and it must not read as though it changed the measurement.
+        reasons = _reason_sentences(draft, line)
+
         totals = _totals_sentence(draft, line)
 
         draft.text(f"{line.service} — {line.period_start.isoformat()} to {line.period_end.isoformat()}")
         draft.paragraph(
-            provision, arithmetic, confirmed, observed, *excused, silence, undocumented_note, totals
+            provision,
+            arithmetic,
+            confirmed,
+            observed,
+            *excused,
+            silence,
+            undocumented_note,
+            *reasons,
+            totals,
         )
 
     if omitted:

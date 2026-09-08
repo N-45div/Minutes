@@ -459,6 +459,16 @@ def _evidence_ref(event: ServiceEvent) -> EvidenceRef:
             f"{event.event_date.isoformat()}: {event.minutes} minutes of "
             f"{event.service} recorded as delivered"
         )
+        if event.makes_up_for is not None:
+            # These minutes are counted against an earlier week, so the
+            # footnote has to say why a session dated here pays for a session
+            # dated there. Without it a reader checking the arithmetic by hand
+            # finds a November delivery inside an October total and stops
+            # trusting the column.
+            detail += (
+                f", recorded as making up the session of {event.makes_up_for.isoformat()} "
+                f"and counted against that date"
+            )
     else:
         detail = (
             f"{event.event_date.isoformat()}: {event.service} session recorded "

@@ -929,6 +929,16 @@
     });
   }
 
+  // What a record gave as the reason a session did not happen. Descriptive: no
+  // figure on any screen changes because of one.
+  var CAUSE = {
+    provider_absent: 'Provider absent',
+    provider_vacancy: 'Position vacant',
+    school_closure: 'School closed',
+    school_activity: 'School activity',
+    testing: 'Testing'
+  };
+
   function loadEvidence(id, guard) {
     call({ action: 'list_evidence', case_id: id }).then(function (res) {
       if (!guard()) return;
@@ -942,9 +952,16 @@
         list = list.slice().sort(function (a, b) { return String(b.event_date).localeCompare(String(a.event_date)); });
         box.innerHTML = '<ul class="rows evidence">' + list.map(function (e) {
           var what = e.delivered ? fmtMin(e.minutes) + ' minutes delivered' : 'session missed';
+          // A make-up pays for an earlier week, and the row says so — otherwise
+          // the totals look wrong to anyone checking them against these dates.
+          if (e.delivered && e.makes_up_for) what += ' · makes up ' + fmtDate(e.makes_up_for);
           var tags = provChip(e.provenance) + (e.attribution === 'student_absence' ? '<span class="prov neutral">Student absent</span>' : '');
+          // The reason the record itself gives. Never the accent colour: it
+          // describes a session, it does not ask anything of the parent.
+          var reason = (!e.delivered && e.cause && e.cause !== 'unstated' && e.attribution !== 'student_absence')
+            ? '<span class="prov neutral">' + esc(CAUSE[e.cause] || e.cause) + '</span>' : '';
           return '<li><span class="d">' + esc(fmtDate(e.event_date)) + '</span><span>' + esc(e.service || '') + ' · ' + esc(what) +
-            (e.source ? '<span class="sub">' + esc(sourceLabel(e.source)) + '</span>' : '') + '</span><span class="tags">' + tags + '</span></li>';
+            (e.source ? '<span class="sub">' + esc(sourceLabel(e.source)) + '</span>' : '') + '</span><span class="tags">' + tags + reason + '</span></li>';
         }).join('') + '</ul>' +
           '<div class="legend"><span><i class="sw" style="background:var(--slate-tint);border-color:transparent"></i>School record: the district’s own record or written statement</span><span><i class="sw"></i>Your note: dated, but not the school’s record</span><span><i class="sw" style="border-color:var(--ink-3)"></i>Documented silence: records were asked for and not produced</span></div>';
       }

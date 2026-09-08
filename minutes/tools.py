@@ -67,6 +67,7 @@ from .letters import (
     validate_letter,
 )
 from .models import (
+    Provenance,
     DeadlineState,
     DeadlineStatus,
     DecisionCard,
@@ -371,6 +372,23 @@ def _shortfall_row(shortfall: ServiceShortfall) -> dict:
         "school_confirmed_minutes": shortfall.school_confirmed_minutes,
         "parent_observed_minutes": shortfall.parent_observed_minutes,
         "undocumented_minutes": shortfall.undocumented_minutes,
+        # Descriptive, and labelled as such so the model does not read a reason
+        # as a finding. Whether missed minutes are owed back is a FAPE question
+        # decided case by case; the letter compilers state these reasons and
+        # ask the district about them, and never conclude from them.
+        "reasons_the_records_give": [
+            {
+                "reason": reason.cause.phrase,
+                "sessions": reason.sessions,
+                "dates": [day.isoformat() for day in reason.dates],
+                "written_by": (
+                    "the district"
+                    if reason.evidence_grade is Provenance.SCHOOL_CONFIRMED
+                    else "the family"
+                ),
+            }
+            for reason in shortfall.stated_reasons
+        ],
         "evidence_count": len(shortfall.evidence),
     }
 

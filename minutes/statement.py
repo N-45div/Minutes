@@ -49,6 +49,8 @@ from datetime import date
 
 from .letters import ALLOWED_CITATIONS, LEGAL_CONCLUSION_PHRASES
 from .models import (
+    Provenance,
+    StatedReason,
     DeadlineState,
     DeadlineStatus,
     DecisionCard,
@@ -291,12 +293,19 @@ def _lines(result: ReconciliationResult) -> list[StatementLine]:
     split that service into. Services absent from the reconciliation are
     absent here too: a statement never invents a line."""
     totals: dict[str, Counter[str]] = {}
+    reasons: dict[str, list[StatedReason]] = {}
     for shortfall in result.shortfalls:
         bucket = totals.setdefault(shortfall.service, Counter())
         for field in _SUMMED_FIELDS:
             bucket[field] += getattr(shortfall, field)
+        # Concatenated rather than summed: a reason is a set of dates, and two
+        # windows of the same service never name the same date twice.
+        reasons.setdefault(shortfall.service, []).extend(shortfall.stated_reasons)
 
-    lines = [StatementLine(service=service, **bucket) for service, bucket in totals.items()]
+    lines = [
+        StatementLine(service=service, stated_reasons=reasons.get(service, []), **bucket)
+        for service, bucket in totals.items()
+    ]
     # Biggest gap first: the line that matters should not be scrolled to.
     return sorted(lines, key=lambda line: (-line.shortfall_minutes, line.service))
 
@@ -559,6 +568,51 @@ def _service_table(statement: Statement) -> _Table:
     return _Table(headers, tuple(rows))
 
 
+def _reason_blocks(statement: Statement) -> list[_Block]:
+    """The sessions a record actually explains, and who wrote the explanation.
+
+    Most missed sessions are explained by nobody, which is why this section
+    only appears when something was explained. What it must never become is a
+    tally of minutes owed: whether a missed session has to be made up is an
+    individual determination about the child's education, not a consequence of
+    the word a provider happened to type, so this table counts sessions and
+    names their dates and stops there.
+
+    Split by who wrote it, because a parent's note that the post was vacant and
+    the district's own email saying so are worth very different amounts, and a
+    parent forwarding this document should never be surprised by which one they
+    are holding.
+    """
+    reasons = [
+        (line.service, reason)
+        for line in statement.lines
+        for reason in line.stated_reasons
+    ]
+    if not reasons:
+        return []
+
+    rows = tuple(
+        (
+            _cell(service),
+            _cell(reason.cause.phrase.capitalize()),
+            _fmt_cell(reason.sessions),
+            _cell("the district" if reason.evidence_grade is Provenance.SCHOOL_CONFIRMED else "you"),
+            _cell(", ".join(day.isoformat() for day in reason.dates)),
+        )
+        for service, reason in reasons
+    )
+
+    return [
+        _Heading("What the records give as the reason"),
+        _Para(
+            "Where a record explains why a session did not happen, it is repeated here in its own "
+            "words. Nothing in the columns above changes because of anything in this table -- a "
+            "reason is not a decision about what is owed, and who wrote it down matters."
+        ),
+        _Table(("Service", "Reason given", "Sessions", "Written by", "Dates"), rows),
+    ]
+
+
 def _service_blocks(statement: Statement) -> list[_Block]:
     if not statement.lines:
         return []
@@ -601,6 +655,7 @@ def _service_blocks(statement: Statement) -> list[_Block]:
                 "else -- it says nothing about how the school delivered the rest."
             )
         )
+    blocks += _reason_blocks(statement)
     blocks += [
         _Heading("Where the evidence comes from"),
         _Table(

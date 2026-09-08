@@ -152,7 +152,7 @@ _CAUSE_PHRASES: dict["MissCause", str] = {
     MissCause.UNSTATED: "no reason recorded",
     MissCause.STUDENT_ABSENT: "the student was absent",
     MissCause.PROVIDER_ABSENT: "the provider was absent",
-    MissCause.PROVIDER_VACANCY: "the position was vacant or unfilled",
+    MissCause.PROVIDER_VACANCY: "the position was vacant",
     MissCause.SCHOOL_CLOSURE: "the school was closed",
     MissCause.SCHOOL_ACTIVITY: "a school activity displaced the session",
     MissCause.TESTING: "testing displaced the session",
@@ -385,6 +385,10 @@ class StatementLine(BaseModel):
     school_confirmed_minutes: int = Field(ge=0)
     parent_observed_minutes: int = Field(ge=0)
     undocumented_minutes: int = Field(ge=0)
+    stated_reasons: list[StatedReason] = Field(
+        default_factory=list,
+        description="Reasons the records give for missed sessions of this service; descriptive only",
+    )
 
 
 class Statement(BaseModel):
