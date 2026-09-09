@@ -73,7 +73,10 @@ fixture evidence went through.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import contextvars
+import hashlib
 import os
 import tempfile
 import threading
@@ -98,6 +101,8 @@ from minutes.cycle import CycleOutcome, RaisedCard, run_cycle
 from minutes.deadlines import evaluate_deadlines
 from minutes.extraction import extract_ledger
 from minutes.models import (
+    Attachment,
+    AttachmentKind,
     AuditEntry,
     Correspondence,
     CorrespondenceKind,
@@ -109,6 +114,7 @@ from minutes.models import (
     ServiceObligation,
 )
 from minutes.quarantine import scan
+from minutes.transcribe import transcribe
 from minutes.reader import documents_for, read_items
 from minutes.reconcile import canonical_service
 from minutes.tools import (
@@ -538,9 +544,73 @@ MIN_IEP_CHARS = 200
 pasted URL, and extracting a ledger from it would invent every field."""
 
 
+# What the runtime will accept as one file. The browser refuses earlier and
+# with a friendlier sentence; the proxy refuses at 5 MB of request body, which
+# is roughly this once base64 has added its third. This is the backstop, so it
+# is stated in the units the parent's file is actually in.
+MAX_UPLOAD_BYTES = 3_500_000
+
+# Declared type -> (what it is, the format Bedrock wants, the bytes it must
+# actually start with). The magic number is the point: a declared media type is
+# a claim by whoever is uploading, and a PDF announced as a JPEG would otherwise
+# be handed to an image block, or worse to a path that trusted the label.
+UPLOAD_TYPES: dict[str, tuple[AttachmentKind, str, bytes]] = {
+    "application/pdf": (AttachmentKind.PDF, "pdf", b"%PDF-"),
+    "image/jpeg": (AttachmentKind.PHOTO, "jpeg", b"\xff\xd8\xff"),
+    "image/png": (AttachmentKind.PHOTO, "png", b"\x89PNG\r\n\x1a\n"),
+}
+
+MIN_TRANSCRIPT_CHARS = 20
+"""Less than this came off a photograph of nothing readable. Filing it would
+put an item on the record whose body says nothing and whose original nobody
+will look at again."""
+
+
 def _writable(case_id: str) -> None:
     if is_sample(case_id):
         raise ValueError("the sample case is read-only")
+
+
+def _upload(payload: dict) -> tuple[bytes, AttachmentKind, str, str]:
+    """Decode and vet one uploaded file. Returns (bytes, kind, format, media_type).
+
+    Every refusal here happens before a model is called, and each one names the
+    field and the rule, because the parent reading it is holding the file.
+    """
+    file = payload.get("file")
+    if not isinstance(file, dict):
+        raise ValueError("'file' must be an object with 'media_type' and 'data'")
+
+    media_type = str(file.get("media_type") or "").strip().lower()
+    if media_type not in UPLOAD_TYPES:
+        raise ValueError(
+            f"'media_type' {media_type or '(missing)'!r} is not one Minutes reads; it reads "
+            + ", ".join(sorted(UPLOAD_TYPES))
+        )
+    kind, fmt, magic = UPLOAD_TYPES[media_type]
+
+    data = file.get("data")
+    if not isinstance(data, str) or not data:
+        raise ValueError("'data' must be the file, base64-encoded")
+    try:
+        blob = base64.b64decode(data, validate=True)
+    except (binascii.Error, ValueError) as bad:
+        raise ValueError(f"'data' is not valid base64: {bad}") from None
+
+    if not blob:
+        raise ValueError("'data' decoded to an empty file")
+    if len(blob) > MAX_UPLOAD_BYTES:
+        raise ValueError(
+            f"that file is {len(blob) / 1_000_000:.1f} MB and Minutes accepts up to "
+            f"{MAX_UPLOAD_BYTES / 1_000_000:.1f} MB. If you scanned it, scan again in black "
+            "and white or at a lower quality - the words are what matter, not the picture."
+        )
+    if not blob.startswith(magic):
+        raise ValueError(
+            f"that file says it is {media_type} and its contents are not. Send the file as it "
+            "came off the device, without renaming it."
+        )
+    return blob, kind, fmt, media_type
 
 
 def _obligation_row(o: ServiceObligation) -> dict:
@@ -615,17 +685,67 @@ def _ingest_iep(case_id: str, payload: dict) -> dict:
     and from here on every figure about this family is arithmetic over it.
     """
     _writable(case_id)
-    text = payload.get("text")
-    if not isinstance(text, str) or len(text.strip()) < MIN_IEP_CHARS:
-        raise ValueError(
-            f"'text' must be the IEP itself, at least {MIN_IEP_CHARS} characters; got "
-            f"{len(text.strip()) if isinstance(text, str) else 0}"
-        )
-    ledger: IEPLedger = extract_ledger(text)
+    has_file = payload.get("file") is not None
+
+    if has_file:
+        if payload.get("text"):
+            raise ValueError("send the IEP as text or as a file, not both")
+        blob, kind, fmt, _ = _upload(payload)
+        if kind is not AttachmentKind.PDF:
+            raise ValueError(
+                "an IEP goes in as the PDF the school sent you, or as pasted text. A "
+                "photograph of one page is not the whole promise, and a ledger built from "
+                "it would be missing most of it."
+            )
+        ledger = _extract_document(blob, fmt)
+        source = "pdf"
+    else:
+        text = payload.get("text")
+        if not isinstance(text, str) or len(text.strip()) < MIN_IEP_CHARS:
+            raise ValueError(
+                f"'text' must be the IEP itself, at least {MIN_IEP_CHARS} characters; got "
+                f"{len(text.strip()) if isinstance(text, str) else 0}"
+            )
+        ledger = extract_ledger(text)
+        source = "pasted"
+
     store = case_store()
     store.write_ledger(case_id, ledger)
-    store.touch(case_id, student_alias=ledger.student_alias, source="pasted")
-    return _case(case_id)
+    store.touch(case_id, student_alias=ledger.student_alias, source=source)
+    out = _case(case_id)
+
+    # The fence cannot wrap a PDF -- it is a string transform and the pages
+    # reach Bedrock as images. What it can do is read the sentences that came
+    # back out. A quote is the one part of a ledger taken verbatim from the
+    # document, so an instruction printed on the page arrives here or nowhere.
+    findings = scan(*[o.source_quote for o in ledger.obligations])
+    if findings:
+        out["instruction_findings"] = [finding.as_dict() for finding in findings]
+    return out
+
+
+def _extract_document(blob: bytes, fmt: str) -> IEPLedger:
+    """Read a PDF into a ledger, turning the two known failures into sentences.
+
+    Both of these otherwise reach the parent as a wall of library text through
+    the generic handler, at the moment they are least able to act on it.
+    """
+    try:
+        return extract_ledger(document=blob, document_format=fmt)
+    except Exception as failure:
+        message = str(failure)
+        if "100 PDF pages" in message or "maximum of 100" in message.lower():
+            raise ValueError(
+                "that PDF has more than 100 pages, which is more than Minutes reads in one "
+                "go. Send the services pages on their own, or paste them as text."
+            ) from None
+        if "validation error" in message.lower() and "IEPLedger" in message:
+            raise ValueError(
+                "Minutes read that PDF but could not build a ledger it can stand behind - "
+                "some services came back without the dates or figures the IEP has to state. "
+                "Paste the services pages as text instead."
+            ) from None
+        raise
 
 
 def _obligation_for(ledger: IEPLedger, service: str) -> ServiceObligation:
@@ -755,22 +875,53 @@ def _add_correspondence(case_id: str, payload: dict) -> dict:
     sender = str(payload.get("sender") or "").strip()
     if not sender:
         raise ValueError("'sender' is required; who the item came from")
-    body = str(payload.get("body") or "").strip()
-    if not body:
-        raise ValueError("'body' is required; the text of the item")
     subject = str(payload.get("subject") or "").strip()
+    store = case_store()
+
+    if payload.get("file") is not None:
+        if payload.get("body"):
+            raise ValueError("send the item as text or as a photograph, not both")
+        blob, upload_kind, _, media_type = _upload(payload)
+        if upload_kind is not AttachmentKind.PHOTO:
+            raise ValueError(
+                "a school item goes in as text or as a photograph. Send a PDF as an IEP."
+            )
+        body = transcribe(blob, media_type)
+        if len(body) < MIN_TRANSCRIPT_CHARS:
+            raise ValueError(
+                "nothing readable came off that photograph. Retake it square-on in better "
+                "light, or type what the page says."
+            )
+        item_id = _next_id("photo", received, _taken_ids(case_id))
+        # The file is stored BEFORE the item that cites it. A stored file no
+        # item points at is litter; an item pointing at a file that was never
+        # written is a citation to nothing, and this product is the citation.
+        stored_as = store.write_attachment(case_id, f"{item_id}.{media_type.split('/')[1]}", blob, media_type)
+        attachment = Attachment(
+            kind=upload_kind,
+            media_type=media_type,
+            stored_as=stored_as,
+            bytes=len(blob),
+            sha256=hashlib.sha256(blob).hexdigest(),
+        )
+    else:
+        body = str(payload.get("body") or "").strip()
+        if not body:
+            raise ValueError("'body' is required; the text of the item, or send 'file'")
+        item_id = _next_id("paste", received, _taken_ids(case_id))
+        attachment = None
 
     item = Correspondence(
-        item_id=_next_id("paste", received, _taken_ids(case_id)),
+        item_id=item_id,
         received=received,
         kind=kind,
         sender=sender,
         subject=subject,
         body=body,
+        attachment=attachment,
     )
     reading = read_items([item], case.ledger)[0]
 
-    store = case_store()
     store.append_correspondence(case_id, [item])
     store.append_events(case_id, reading.events)
     store.touch(case_id)

@@ -55,10 +55,17 @@ API_PATH = "/api"
 ASSETS_PREFIX = "/assets/"
 INDEX = "index.html"
 
-# A payload is an action and a case id, not a document upload. A cap far
-# below the Function URL's own 6 MB keeps a stray upload from reaching the
-# runtime at all.
-MAX_BODY_BYTES = 256 * 1024
+# A payload IS a document upload now: a parent sends the IEP as the PDF the
+# district emailed them, and a service log as a photograph of the page.
+#
+# The arithmetic, from measurements rather than from the docs. Base64 adds a
+# third, so the runtime's own 3.5 MB per-file limit is about 4.67 MB of body.
+# A Lambda Function URL rejects the whole event above 6,291,456 bytes -- hard,
+# not raisable, and its refusal is an opaque 413 the parent cannot act on. So
+# the cap sits between the two: high enough that every file the runtime would
+# accept gets through and is refused by name, low enough to leave more than a
+# megabyte of headroom under the ceiling that answers with nothing.
+MAX_BODY_BYTES = 5_000_000
 
 # Everything the bundle may serve, by extension, and how to label it. A file
 # with any other extension is not served even if it is in the zip.
@@ -281,7 +288,7 @@ def handle_api(event: dict[str, Any]) -> dict[str, Any]:
     except ValueError as exc:
         return error(400, str(exc))
     if len(raw) > MAX_BODY_BYTES:
-        return error(413, f"body is over {MAX_BODY_BYTES} bytes")
+        return error(413, f"that request is over {MAX_BODY_BYTES / 1_000_000:.0f} MB, which is more than Minutes accepts in one go")
     try:
         payload = json.loads(raw.decode("utf-8") or "null")
     except (UnicodeDecodeError, json.JSONDecodeError):

@@ -12,6 +12,7 @@ layout are the same layout:
     cases/<case_id>/correspondence.json  list[Correspondence]
     cases/<case_id>/events.json          list[ServiceEvent]
     cases/<case_id>/meta.json            {created, updated, student_alias, source}
+    cases/<case_id>/attachments/<item>.<ext>   the original photograph of a page
 
 Two stores implement it. :class:`DirCaseStore` is a directory — a laptop, a
 test. :class:`S3CaseStore` is the bucket the caseworker sessions already live
@@ -83,6 +84,18 @@ DEFAULT_CASE_ID = "maya-demo"
 SAMPLE_CASE_IDS = frozenset({DEFAULT_CASE_ID, "maya"})
 
 CASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$")
+
+ATTACHMENTS = "attachments/"
+
+# One photographed page. Well above what the browser sends after downscaling
+# (~700 KB) and well under what the runtime will accept at all, so a file that
+# reaches here has already passed a friendlier check with a better message.
+MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024
+
+# The same shape as a case id, and for the same reason: this becomes a path
+# segment on a disk and a key in a bucket. It is derived from the item id
+# Minutes generates, never from a filename a browser supplied.
+ATTACHMENT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 """What a case id may look like.
 
 It becomes a directory name, an S3 key segment, a session id and a Cedar
@@ -175,6 +188,19 @@ class CaseStore(ABC):
         """The text of ``cases/<case_id>/<name>``, or None when absent."""
 
     @abstractmethod
+    def _read_bytes(self, case_id: str, name: str) -> bytes | None:
+        """The stored file, or None. A parallel path to :meth:`_read`, not a widening of it.
+
+        The text pair encodes, decodes and writes ``application/json``. A
+        photograph does none of those things, and a single method that tried to
+        do both would be one ``isinstance`` away from writing a JPEG as JSON.
+        """
+
+    @abstractmethod
+    def _write_bytes(self, case_id: str, name: str, blob: bytes, content_type: str) -> None:
+        """Store one file verbatim under its own content type."""
+
+    @abstractmethod
     def _write(self, case_id: str, name: str, text: str) -> None:
         ...
 
@@ -204,6 +230,40 @@ class CaseStore(ABC):
     def read_correspondence(self, case_id: str) -> list[Correspondence]:
         text = self._read(validate_case_id(case_id), "correspondence.json")
         return [Correspondence.model_validate(raw) for raw in json.loads(text)] if text else []
+
+    def write_attachment(self, case_id: str, name: str, blob: bytes, content_type: str) -> str:
+        """Keep the original a transcript was read out of. Returns its key.
+
+        The transcript on the item is Minutes' reading of this file, so without
+        the file the item's text has no source and the evidence chain ends at
+        an assertion. That is the whole reason the store learned to hold bytes.
+
+        ``name`` must be the item id Minutes generated. It becomes a path
+        segment and an S3 key, so it is validated rather than trusted, and a
+        browser-supplied filename never reaches here.
+        """
+        case_id = validate_case_id(case_id)
+        self._refuse_sample(case_id)
+        if not ATTACHMENT_NAME.fullmatch(name):
+            raise ValueError(
+                f"attachment name {name!r} is not a plain name; it becomes a path and a key"
+            )
+        if not blob:
+            raise ValueError("attachment is empty")
+        if len(blob) > MAX_ATTACHMENT_BYTES:
+            raise ValueError(
+                f"attachment is {len(blob)} bytes; the limit is {MAX_ATTACHMENT_BYTES}"
+            )
+        key = f"{ATTACHMENTS}{name}"
+        self._write_bytes(case_id, key, blob, content_type)
+        return key
+
+    def read_attachment(self, case_id: str, key: str) -> bytes | None:
+        """One stored original, by the key :meth:`write_attachment` returned."""
+        case_id = validate_case_id(case_id)
+        if not key.startswith(ATTACHMENTS) or not ATTACHMENT_NAME.fullmatch(key[len(ATTACHMENTS):]):
+            raise ValueError(f"attachment key {key!r} is not one this store issued")
+        return self._read_bytes(case_id, key)
 
     def append_correspondence(self, case_id: str, items: list[Correspondence]) -> None:
         self._refuse_sample(case_id)
@@ -274,6 +334,20 @@ class DirCaseStore(CaseStore):
         tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, path)
 
+    def _read_bytes(self, case_id: str, name: str) -> bytes | None:
+        path = self._path(case_id, name)
+        return path.read_bytes() if path.exists() else None
+
+    def _write_bytes(self, case_id: str, name: str, blob: bytes, content_type: str) -> None:
+        # content_type is carried on the model, not the filesystem; a directory
+        # has nowhere to put it and the extension already says what it is.
+        del content_type
+        path = self._path(case_id, name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_bytes(blob)
+        os.replace(tmp, path)
+
     def exists(self, case_id: str) -> bool:
         return self._path(validate_case_id(case_id), "ledger.json").exists()
 
@@ -337,6 +411,26 @@ class S3CaseStore(CaseStore):
             Key=self._key(case_id, name),
             Body=text.encode("utf-8"),
             ContentType="application/json",
+        )
+
+    def _read_bytes(self, case_id: str, name: str) -> bytes | None:
+        from botocore.exceptions import ClientError
+
+        try:
+            body = self.client.get_object(Bucket=self.bucket, Key=self._key(case_id, name))["Body"]
+        except ClientError as error:
+            if self._is_missing(error):
+                return None
+            raise
+        raw = body.read()
+        return raw if isinstance(raw, bytes) else str(raw).encode("utf-8")
+
+    def _write_bytes(self, case_id: str, name: str, blob: bytes, content_type: str) -> None:
+        self.client.put_object(
+            Bucket=self.bucket,
+            Key=self._key(case_id, name),
+            Body=blob,
+            ContentType=content_type,
         )
 
     def exists(self, case_id: str) -> bool:
