@@ -66,9 +66,17 @@ The remaining actions are how a parent runs THEIR case rather than the sample:
 
 ``add_note`` and ``mark_received`` are deterministic. ``ingest_iep`` and
 ``add_correspondence`` are the only two actions here that run a model, and
-neither lets it decide a figure: extraction is structured output over the IEP
-the parent pasted, and classification is the same voted, grounded reading the
-fixture evidence went through.
+neither lets it decide a figure: extraction is structured output over the IEP,
+and classification is the same voted, grounded reading the fixture evidence
+went through.
+
+Both of those two also take a FILE, because neither an IEP nor a service log
+arrives as text anybody typed. ``ingest_iep`` takes the PDF a district emailed,
+scanned or born-digital alike -- Bedrock rasterises the pages, so there is one
+path and no OCR dependency. ``add_correspondence`` takes a photograph of a
+page, which a tool-less transcriber reads into text; that text becomes the
+item's body and goes through the identical gates a pasted email does, and the
+photograph is kept, because the body is Minutes' reading of it.
 """
 
 from __future__ import annotations

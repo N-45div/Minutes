@@ -93,6 +93,73 @@
     setTimeout(function () { el.remove(); }, 2400);
   }
 
+  // --- files -------------------------------------------------------------
+  // A parent has the IEP as the PDF the school emailed and the service log as
+  // a photo on their phone. Both go up base64 inside the JSON body; the
+  // runtime refuses anything over 3.5 MB by name, and this refuses earlier.
+  var MAX_UPLOAD_BYTES = 3500000;
+
+  function humanBytes(n) {
+    return n >= 1000000 ? (n / 1000000).toFixed(1) + ' MB' : Math.round(n / 1000) + ' KB';
+  }
+
+  function readFileBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onerror = function () { reject(new Error('That file could not be read off the disk.')); };
+      reader.onload = function () {
+        // A data: URL is "data:<type>;base64,<payload>" — take the payload.
+        var out = String(reader.result);
+        resolve(out.slice(out.indexOf(',') + 1));
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Shrink a phone photo before it goes anywhere. A 12 MP JPEG is 3-6 MB and
+  // the words on a service log survive 1568px on the long edge intact; past
+  // that the model downscales anyway, so the extra pixels buy nothing and cost
+  // upload time on a phone connection.
+  var LADDER = [[1568, 0.82], [1400, 0.75], [1200, 0.68], [1000, 0.62]];
+  var PHOTO_BUDGET_BYTES = 700000;
+
+  function downscaleImage(file) {
+    if (typeof createImageBitmap !== 'function' || !document.createElement('canvas').getContext) {
+      return readFileBase64(file).then(function (data) {
+        return { data: data, media_type: file.type, bytes: file.size, scaled: false };
+      });
+    }
+    // imageOrientation:'from-image' applies the EXIF rotation. Without it a
+    // portrait photo from a phone arrives on its side, and a sideways service
+    // log transcribes as nonsense.
+    return createImageBitmap(file, { imageOrientation: 'from-image' }).then(function (bitmap) {
+      var step = 0;
+      function attempt() {
+        var edge = LADDER[step][0], quality = LADDER[step][1];
+        var scale = Math.min(1, edge / Math.max(bitmap.width, bitmap.height));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.round(bitmap.width * scale);
+        canvas.height = Math.round(bitmap.height * scale);
+        var ctx = canvas.getContext('2d');
+        // Filled white first: a transparent PNG drawn onto an empty canvas
+        // composites to black, and black-on-black transcribes as nothing.
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        var url = canvas.toDataURL('image/jpeg', quality);
+        var data = url.slice(url.indexOf(',') + 1);
+        var bytes = Math.round(data.length * 3 / 4);
+        if (bytes > PHOTO_BUDGET_BYTES && step < LADDER.length - 1) { step++; return attempt(); }
+        return { data: data, media_type: 'image/jpeg', bytes: bytes, scaled: true };
+      }
+      return attempt();
+    }).catch(function () {
+      return readFileBase64(file).then(function (data) {
+        return { data: data, media_type: file.type, bytes: file.size, scaled: false };
+      });
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Storage: the key and API base live in this tab's session; per-case context
   // (alias, ledger start, services) is cached so a header can paint at once.
@@ -533,7 +600,12 @@
       '<section class="tight"><div class="eyebrow">A new case' + (presetId ? ' · ' + esc(presetId) : '') + '</div>' +
       '<h1>Paste the IEP.</h1>' +
       '<p class="lede">Minutes reads it once into a ledger: each service as minutes, sessions and dates, and each deadline the document sets. You will see the ledger and confirm it before anything else happens. Use a pseudonym for your child if the document names them; the ledger keeps an alias, never the full name.</p>' +
-      '<form class="sheet" id="iep-form"><label class="field"><span>The IEP, as text</span>' +
+      '<form class="sheet" id="iep-form">' +
+      '<label class="field"><span>The IEP, as the PDF the school sent you</span>' +
+      '<input type="file" id="iep-file" name="iepfile" accept="application/pdf">' +
+      '<span class="counter" id="iep-file-note">A scan is fine — Minutes reads the pages either way.</span></label>' +
+      '<div class="orrule"><span>or paste it</span></div>' +
+      '<label class="field"><span>The IEP, as text</span>' +
       '<textarea class="iep" name="iep" id="iep-text" required minlength="200" placeholder="Paste the services and the dates the IEP sets. The whole document is fine." spellcheck="false"></textarea>' +
       '<span class="counter" id="iep-count">0 characters · at least 200 needed</span></label>' +
       '<div class="formfoot"><button type="submit" class="primary" id="iep-submit">Read the IEP</button>' +
@@ -547,16 +619,34 @@
       count.textContent = fmtMin(n) + ' characters' + (n < 200 ? ' · at least 200 needed' : '');
       count.className = 'counter' + (n < 200 ? ' short' : '');
     });
+    var picker = document.getElementById('iep-file'), fileNote = document.getElementById('iep-file-note');
+    picker.addEventListener('change', function () {
+      var f = picker.files && picker.files[0];
+      if (!f) { fileNote.textContent = 'A scan is fine — Minutes reads the pages either way.'; fileNote.className = 'counter'; return; }
+      var over = f.size > MAX_UPLOAD_BYTES;
+      fileNote.textContent = f.name + ' · ' + humanBytes(f.size) +
+        (over ? ' · too large. Minutes accepts up to ' + humanBytes(MAX_UPLOAD_BYTES) + '.' : '');
+      fileNote.className = 'counter' + (over ? ' short' : '');
+      if (!over) { ta.value = ''; count.textContent = '0 characters · at least 200 needed'; }
+    });
+
     document.getElementById('iep-form').addEventListener('submit', function (e) {
       e.preventDefault();
       var text = ta.value.trim();
-      if (text.length < 200) { count.className = 'counter short'; ta.focus(); return; }
+      var chosen = picker.files && picker.files[0];
+      if (!chosen && text.length < 200) { count.className = 'counter short'; ta.focus(); return; }
+      if (chosen && chosen.size > MAX_UPLOAD_BYTES) { picker.focus(); return; }
       var id = presetId || newCaseId();
       var result = document.getElementById('iep-result');
       var btn = document.getElementById('iep-submit');
       btn.disabled = true;
       result.innerHTML = loadingHtml('Reading the IEP into a ledger. Case ' + id + '.', 'Extracting');
-      call({ action: 'ingest_iep', case_id: id, text: text }).then(function (res) {
+      var ready = chosen
+        ? readFileBase64(chosen).then(function (data) {
+            return { action: 'ingest_iep', case_id: id, file: { media_type: 'application/pdf', data: data } };
+          })
+        : Promise.resolve({ action: 'ingest_iep', case_id: id, text: text });
+      ready.then(function (payload) { return call(payload, { timeoutMs: 150000 }); }).then(function (res) {
         btn.disabled = false;
         if (res.status === 'error') { result.innerHTML = errorHtml(errorFrom(res, 'ingest_iep')); return; }
         // The reply is the runtime's `case` shape: student, school_year,
@@ -929,6 +1019,16 @@
     });
   }
 
+  // A body read off a photograph is Minutes' reading, not the district's
+  // characters, and the parent is the only person who can check it against the
+  // page. Monospace on purpose: proportional spacing hides the column drift
+  // that is exactly what a misread log looks like.
+  function transcriptHtml(item) {
+    if (!item || !item.attachment) return '';
+    return '<div class="transcript"><div class="cap">Minutes read this off your photograph. ' +
+      'Check it against the page before you rely on it.</div><pre>' + esc(item.body || '') + '</pre></div>';
+  }
+
   // What a record gave as the reason a session did not happen. Descriptive: no
   // figure on any screen changes because of one.
   var CAUSE = {
@@ -972,13 +1072,15 @@
         var KIND = { school_email: 'School email', parent_log: 'Your note', progress_report: 'Progress report', service_log: 'Service log' };
         ibox.innerHTML = '<ul class="rows evidence">' + items.map(function (it) {
           var chip = it.kind === 'parent_log' ? '<span class="prov parent">Your note</span>' : '<span class="prov">' + esc(KIND[it.kind] || it.kind) + '</span>';
+          if (it.attachment) chip += '<span class="prov neutral">Photographed</span>';
           // An item whose text tried to give the software orders. It is listed,
           // read and reconciled like any other; this only says so out loud.
           var found = Array.isArray(it.instruction_findings) ? it.instruction_findings : [];
           if (found.length) chip += '<span class="prov instructed" title="Filed as written. It changed nothing.">Tried to instruct</span>';
           return '<li><span class="d">' + esc(fmtDate(it.received)) + '</span><span>' + esc(it.subject || KIND[it.kind] || '') + '<span class="sub">' + esc(it.sender || '') + (it.item_id ? ' · ' + esc(it.item_id) : '') + '</span>' +
             instructionNote(found) +
-            '<details class="kept"><summary>The text</summary><div class="paper" style="font-size:15px;padding:16px 18px">' + esc(it.body || '') + '</div></details></span><span class="tags">' + chip + '</span></li>';
+            '<details class="kept"><summary>' + (it.attachment ? 'The transcription' : 'The text') +
+            '</summary><div class="paper" style="font-size:15px;padding:16px 18px' + (it.attachment ? ';white-space:pre-wrap;font-family:ui-monospace,Consolas,monospace' : '') + '">' + esc(it.body || '') + '</div></details></span><span class="tags">' + chip + '</span></li>';
         }).join('') + '</ul>';
       }
     }).catch(function (err) { if (guard()) document.getElementById('evidence-list').innerHTML = errorHtml(err); });
@@ -1027,7 +1129,11 @@
       '<label class="field"><span>Kind</span><select name="kind"><option value="school_email">School email</option><option value="service_log">Service log</option><option value="progress_report">Progress report</option><option value="parent_log">Parent log</option></select></label></div>' +
       '<div class="fieldrow"><label class="field"><span>From</span><input name="sender" required placeholder="e.g. Case manager"></label>' +
       '<label class="field"><span>Subject</span><input name="subject" required placeholder="As it was titled"></label></div>' +
-      '<label class="field"><span>The text</span><textarea name="body" required minlength="20" placeholder="Paste the message or the log as text."></textarea></label>' +
+      '<label class="field"><span>The text</span><textarea name="body" minlength="20" placeholder="Paste the message or the log as text."></textarea></label>' +
+      '<div class="orrule"><span>or photograph the page</span></div>' +
+      '<label class="field"><span>A photo of the page</span>' +
+      '<input type="file" id="corr-file" name="corrfile" accept="image/jpeg,image/png" capture="environment">' +
+      '<span class="counter" id="corr-file-note">Lay it flat, square-on. Minutes reads it and shows you what it read.</span></label>' +
       '<div class="formfoot"><button type="submit" class="primary">Read it into the file</button><span class="note" id="corr-status"></span></div></form>' +
       '<div id="corr-result"></div>';
 
@@ -1055,9 +1161,19 @@
     document.getElementById('corr-form').addEventListener('submit', function (e) {
       e.preventDefault();
       var f = e.target, status = document.getElementById('corr-status'), btn = f.querySelector('button'), result = document.getElementById('corr-result');
-      var payload = { action: 'add_correspondence', case_id: id, received: f.received.value, kind: f.kind.value, sender: f.sender.value.trim(), subject: f.subject.value.trim(), body: f.body.value.trim() };
-      btn.disabled = true; status.textContent = 'Reading… this can take a minute.'; result.innerHTML = '';
-      call(payload).then(function (res) {
+      var photo = document.getElementById('corr-file');
+      var chosen = photo && photo.files && photo.files[0];
+      var typed = f.body.value.trim();
+      if (!chosen && typed.length < 20) { f.body.focus(); return; }
+      var base = { action: 'add_correspondence', case_id: id, received: f.received.value, kind: f.kind.value, sender: f.sender.value.trim(), subject: f.subject.value.trim() };
+      btn.disabled = true; status.textContent = chosen ? 'Reading the photograph… this can take a minute.' : 'Reading… this can take a minute.'; result.innerHTML = '';
+      var ready = chosen
+        ? downscaleImage(chosen).then(function (img) {
+            base.file = { media_type: img.media_type, data: img.data };
+            return base;
+          })
+        : Promise.resolve((base.body = typed, base));
+      ready.then(function (payload) { return call(payload, { timeoutMs: 150000 }); }).then(function (res) {
         btn.disabled = false; status.textContent = '';
         if (res.status === 'error') { showFormError(f, errorFrom(res, 'add_correspondence')); return; }
         clearFormError(f);
@@ -1065,9 +1181,11 @@
         var events = res.events || [];
         var found = Array.isArray(res.instruction_findings) ? res.instruction_findings : [];
         result.innerHTML = '<div class="state-box" style="margin-top:12px"><div>Read. ' + (events.length ? events.length + ' dated ' + plural(events.length, 'fact') + ' went on file:' : 'No dated service fact was found in it; the item itself is kept.') + '</div>' +
+          transcriptHtml(res.item) +
           (events.length ? '<ul class="facts">' + events.map(function (ev) { return '<li>' + esc(fmtDate(ev.event_date)) + ' · ' + esc(ev.service) + ' · ' + (ev.delivered ? fmtMin(ev.minutes) + ' minutes' : 'missed') + '</li>'; }).join('') + '</ul>' : '') +
           instructionNote(found) + '</div>';
         f.body.value = ''; f.subject.value = '';
+        if (photo) photo.value = '';
         loadEvidence(id, guard);
       }).catch(function (err) { btn.disabled = false; status.textContent = ''; showFormError(f, err); });
     });

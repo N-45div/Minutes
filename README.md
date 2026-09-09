@@ -87,10 +87,48 @@ flowchart TB
 
 The engine is deterministic wherever correctness matters. The model reads unstructured text and writes connective prose; it never decides a number, a date, or whether a school fell short. That division is why the arithmetic is reproducible and why the test suite can verify it without a network.
 
-### Two agents, deliberately unequal
+### How a document gets in
 
-Minutes runs two Strands agents, and the split between them is a security
-property rather than a decomposition of labour.
+An IEP is the PDF a district emailed. A service log comes home on paper in a
+backpack. So both go in as files, and neither adds a dependency.
+
+A **PDF** goes straight to Bedrock as a document block, which rasterises the
+pages — so a scanned IEP reads on exactly the same path as a born-digital one.
+That is worth stating because the obvious build does the opposite: extract text
+locally with a PDF library, then refuse the scans, which for a district-issued
+document is most of them.
+
+A **photograph** takes the longer route on purpose. Handing the image straight
+to a model and asking for dated facts was tried, and it returns nothing at all:
+the readings are correct and every one is dropped, because a fact has to be
+grounded in words in the document it came from and a photograph has no words
+until something writes them down. So a tool-less transcriber reads the page
+into text, that text becomes the item's body, and the ordinary gates run over
+it — same grounding, same vote, same provenance, same reasons. On a
+photographed log that pipeline recovers `provider_vacancy` on the row that says
+the post was vacant, and `student_absent` on the row that says the child was
+away.
+
+The photograph is kept on the case, because the body is Minutes' reading of it
+and without the file that reading has no source; `transcribed: true` says so on
+the record. The IEP PDF is not kept — the ledger already carries the verbatim
+sentence each obligation came from, and you still have the file the school sent
+you.
+
+Two consequences worth stating rather than burying. A photographed service log
+carries a child's real name, a provider's name and often a student ID, while
+the ledger deliberately holds only an alias — so storing the original stores
+identifying information the rest of the system was designed not to hold. That
+is a defensible trade, because it is evidence, but it is a trade. And Minutes
+reads up to 3.5 MB and 100 pages in one go; larger documents are refused by
+name, with a sentence saying what to do instead.
+
+### Three agents, deliberately unequal
+
+Minutes runs three Strands agents, and the split between them is a security
+property rather than a decomposition of labour. Two of the three exist only to
+read: the **transcriber** turns a photographed page into text, and the
+**reader** turns text into dated facts. Both are built with `tools=()`.
 
 The **caseworker** has the power. It reconciles the ledger, compiles a records
 request or a shortfall letter, and stops on an interrupt for the parent's

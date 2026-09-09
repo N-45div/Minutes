@@ -46,6 +46,18 @@ software is a fact about that email, and a system whose whole purpose is to
 keep a record should record it. Nothing in Minutes branches on the result:
 a flagged item is filed, read and reconciled exactly like any other, which is
 why a false positive costs a line of text on a screen and never a lost fact.
+
+WHERE THE FENCE DOES NOT REACH, said plainly. :func:`fence` is a string
+transform. It wraps every pasted body and every transcription, and it cannot
+wrap a photograph or a PDF -- those reach the model as pixels, and an
+instruction printed on the page arrives inside the image. What makes such an
+instruction inert there is entirely structural, and it is the same structure as
+everywhere else: the transcriber has no tools and emits only a string, the
+extractor has no tools and emits only a typed ledger, and every fact either
+produces still has to be grounded in the document's own words before the ledger
+accepts it. The scan then runs over what came back -- a transcript is scanned
+as any body is, and ``_ingest_iep`` scans the verbatim quotes a PDF ledger
+carries, which is the one place a printed instruction can surface as text.
 """
 
 from __future__ import annotations
