@@ -167,3 +167,69 @@ def test_blank_lines_do_not_join_rows_across_a_gap():
 def test_the_repair_survives_a_page_with_no_rows_at_all():
     text = "Dear family,\nSpeech services are provided as outlined in the IEP.\nThank you."
     assert join_wrapped_rows(text) == text
+
+
+# ---------------------------------------------------------------------------
+# The issue date of a page you photographed the day it came home.
+#
+# Found by running a photographed log end to end on the deployed app: the log's
+# own total said 115 minutes delivered and Minutes counted 85, because the last
+# row was dated the day the sheet was received and a rule refused it. Dropping a
+# delivery the district itself recorded inflates the shortfall asserted against
+# a school, which is the direction this codebase is most careful about.
+# ---------------------------------------------------------------------------
+
+from minutes.correspondence import _is_admissible  # noqa: E402
+
+
+def _draft(day: date, service: str = "Speech-Language Therapy"):
+    from minutes.correspondence import EventDraft as Draft
+
+    return Draft(item_id="photo-1", event_date=day, service=service, delivered=True, minutes=30)
+
+
+def _obligation():
+    from minutes.models import Period, ServiceObligation
+
+    return ServiceObligation(
+        service="Speech-Language Therapy",
+        minutes_per_session=30,
+        sessions_per_period=2,
+        period=Period.WEEK,
+        provider_role="SLP",
+        setting="therapy room",
+        start_date=date(2026, 9, 8),
+        end_date=date(2027, 6, 11),
+        source_quote="30 minutes per session, 2 sessions per week",
+    )
+
+
+def test_a_service_log_row_dated_the_day_it_arrived_still_counts():
+    """The provider ran the session and handed the sheet over the same afternoon."""
+    log = Correspondence(
+        item_id="photo-1",
+        received=date(2026, 11, 19),
+        kind=CorrespondenceKind.SERVICE_LOG,
+        sender="R. Tovar",
+        subject="November log",
+        body="11/17  -----  0  not held\n11/19  9:15 - 9:45  30 minutes  held  RT",
+    )
+    assert _is_admissible(_draft(date(2026, 11, 19)), log, _obligation()) is True
+
+
+def test_a_progress_reports_own_issue_date_is_still_not_a_session():
+    """The masthead this rule was written for. Narrowing it must not lose that."""
+    from minutes.correspondence import date_is_grounded
+
+    report = Correspondence(
+        item_id="report-1",
+        received=date(2027, 1, 29),
+        kind=CorrespondenceKind.PROGRESS_REPORT,
+        sender="district",
+        subject="Progress report",
+        body="Date issued: 2027-01-29\nSpeech services are being provided as outlined in the IEP.",
+    )
+    assert _is_admissible(_draft(date(2027, 1, 29)), report, _obligation()) is False
+    assert date_is_grounded(report, date(2027, 1, 29)) is False, (
+        "and the grounding rule refuses it independently, which is why narrowing was safe"
+    )
