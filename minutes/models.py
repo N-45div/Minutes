@@ -228,6 +228,36 @@ class CorrespondenceKind(str, Enum):
     SERVICE_LOG = "service_log"
 
 
+class AttachmentKind(str, Enum):
+    PHOTO = "photo"
+    PDF = "pdf"
+
+
+class Attachment(BaseModel):
+    """The original file an item's text was read out of, kept on the case.
+
+    A photographed service log is the case this exists for. Its ``body`` is not
+    the district's characters -- it is a model's reading of a photograph -- so
+    the photograph itself has to stay, or the item's own text has no source and
+    the evidence chain ends at an assertion.
+
+    ``transcribed`` is load-bearing honesty rather than metadata. Everywhere
+    else in Minutes a body is what somebody typed; here it is what Minutes read.
+    A screen that shows the two alike would be committing the exact elision this
+    project exists to avoid.
+    """
+
+    kind: AttachmentKind
+    media_type: str = Field(description="The type as declared and verified, e.g. 'image/jpeg'")
+    stored_as: str = Field(description="Key of the stored original within the case")
+    bytes: int = Field(gt=0)
+    sha256: str = Field(description="Digest of the original, so a stored file can be shown to be the one read")
+    transcribed: bool = Field(
+        default=True,
+        description="True when the item's body is Minutes' reading of this file, not text anyone typed",
+    )
+
+
 class Correspondence(BaseModel):
     """One inbound item: a school message, a returned service log, or a
     parent's quick note."""
@@ -238,6 +268,10 @@ class Correspondence(BaseModel):
     sender: str
     subject: str
     body: str
+    attachment: Attachment | None = Field(
+        default=None,
+        description="Set when the body was read off a file rather than typed",
+    )
 
 
 class StatedReason(BaseModel):

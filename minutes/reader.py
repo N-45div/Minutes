@@ -1,6 +1,7 @@
 """The reader: the one component allowed to look at a document.
 
-Minutes is built out of two agents that are deliberately unequal.
+Minutes is built out of three agents that are deliberately unequal: one that
+can act, and two that can only read.
 
 The **caseworker** (:mod:`minutes.agent`) is the one with power. It reconciles
 the ledger, compiles a records request, compiles a shortfall letter and stops
@@ -14,6 +15,11 @@ of an inbox that anyone on the internet can write to. It holds no tools at all,
 it keeps no memory between documents, and the only thing it can produce is a
 list of typed facts: on this date, this service, delivered or not, for this
 many minutes.
+
+The wall now has two doors. Bytes become text in
+:mod:`minutes.transcribe` -- a photograph of a page read by an agent with no
+tools whose only output is a string -- and text becomes typed facts here. Both
+doors are on the same side of the wall, and neither lets a document through.
 
 The two never swap places, and this module is the wall. Untrusted text goes in
 one side and typed facts come out the other; the caseworker sees the facts and

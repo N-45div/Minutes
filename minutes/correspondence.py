@@ -116,6 +116,23 @@ PROVENANCE_BY_KIND: dict[CorrespondenceKind, Provenance] = {
 # own issue date in a header and must not be read as reporting a session on it.
 RETROSPECTIVE_KINDS = frozenset({CorrespondenceKind.PROGRESS_REPORT, CorrespondenceKind.SERVICE_LOG})
 
+# The subset whose ISSUE DATE must additionally be refused as a session date.
+#
+# A service log was in here and should not have been. Its rows are individually
+# dated, and a provider who runs a session and hands the sheet over the same
+# afternoon writes a row dated the day the parent received it -- which became
+# the ordinary case the moment Minutes could read a photograph of the page, and
+# refusing it dropped a delivery the district's own log records. Dropping a
+# recorded delivery inflates the shortfall asserted against a school, which is
+# the one direction this module exists to be careful about.
+#
+# Nothing is lost by narrowing it. The masthead the rule was written for --
+# "Date issued: 2027-01-29" above a paragraph saying services are being
+# provided as outlined -- is already refused by ``date_is_grounded``, which
+# needs the line to report a session and not to disclaim one. Verified both
+# ways before this was changed.
+ISSUE_DATE_IS_NEVER_A_SESSION = frozenset({CorrespondenceKind.PROGRESS_REPORT})
+
 # A service log is one long item that yields dozens of facts; a parent log is
 # eight words. Packing by character budget keeps both kinds of batch inside one
 # response without ever falling back to one call per item.
@@ -1137,10 +1154,11 @@ def _is_admissible(draft: EventDraft, item: Correspondence, obligation: ServiceO
         return False  # school services are delivered on school days
     if not obligation.start_date <= draft.event_date <= obligation.end_date:
         return False  # outside the term the IEP promises this service for
-    if item.kind in RETROSPECTIVE_KINDS and draft.event_date == item.received:
-        # A compiled document reports on a period that has already closed, so
-        # its own issue date is masthead metadata rather than an encounter.
-        # Without this, "Date issued: 2027-01-29" reads as a session.
+    if item.kind in ISSUE_DATE_IS_NEVER_A_SESSION and draft.event_date == item.received:
+        # A progress report narrates a period that has already closed, so its
+        # own issue date is masthead metadata rather than an encounter. A
+        # service log is not like that: its rows carry their own dates, and the
+        # last one is routinely the day the sheet came home.
         return False
     return date_is_grounded(item, draft.event_date)
 
