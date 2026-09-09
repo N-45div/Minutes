@@ -366,3 +366,65 @@ def test_a_typed_item_still_files_exactly_as_before(transcriber, no_classifier, 
     assert out["item"]["item_id"].startswith("paste-")
     assert out["item"]["attachment"] is None
     assert transcriber.calls == [], "nothing was transcribed"
+
+
+# ---------------------------------------------------------------------------
+# Reading a document again when the first reading came back malformed.
+# ---------------------------------------------------------------------------
+
+
+class _Extractor:
+    """An agent whose structured_output follows a script."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.calls = 0
+
+    def structured_output(self, model, prompt):
+        outcome = self.script[self.calls]
+        self.calls += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def test_a_ledger_that_fails_its_own_schema_is_read_again():
+    """Seen on the deployed runtime, not reproducible locally: one run in several
+    comes back with a service carrying no start date.
+
+    Extraction has one pass, so the analogue of the classifier's vote is to read
+    the document a second time — which is a better answer than telling a parent
+    holding a forty-page PDF to paste the services pages by hand.
+    """
+    from minutes.extraction import _read_once_more_if_malformed
+
+    agent = _Extractor([RuntimeError("1 validation error for IEPLedger"), "a ledger"])
+    assert _read_once_more_if_malformed(agent, "prompt") == "a ledger"
+    assert agent.calls == 2
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeError("A maximum of 100 PDF pages may be provided."),
+        RuntimeError("ExpiredTokenException: the security token has expired"),
+        RuntimeError("ThrottlingException: rate exceeded"),
+    ],
+)
+def test_a_failure_a_second_reading_cannot_fix_is_not_retried(failure):
+    """Deterministic or expensive to repeat. Paying twice for either is waste."""
+    from minutes.extraction import _read_once_more_if_malformed
+
+    agent = _Extractor([failure])
+    with pytest.raises(RuntimeError):
+        _read_once_more_if_malformed(agent, "prompt")
+    assert agent.calls == 1
+
+
+def test_it_gives_up_rather_than_reading_forever():
+    from minutes.extraction import EXTRACTION_ATTEMPTS, _read_once_more_if_malformed
+
+    agent = _Extractor([RuntimeError("1 validation error")] * 5)
+    with pytest.raises(RuntimeError):
+        _read_once_more_if_malformed(agent, "prompt")
+    assert agent.calls == EXTRACTION_ATTEMPTS
