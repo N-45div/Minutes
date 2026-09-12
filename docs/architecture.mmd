@@ -1,0 +1,43 @@
+flowchart TB
+    IEP[IEP document]
+    MAIL[School emails · service logs<br/>progress reports · parent notes]
+    AUDIT[(Audit log — every action,<br/>dated, with its evidence)]
+
+    IEP -->|extract once, cached| LEDGER[(Obligations ledger<br/>typed, every fact cited)]
+    PHOTO[Photograph of a page] -->|pixels in, a string out| TRANSCRIBER[Transcriber agent<br/>no tools · no memory<br/>answers only in text]
+    TRANSCRIBER -->|the transcript is the body| MAIL
+    MAIL -->|fenced as a quoted document| READER[Reader agent<br/>no tools · no memory<br/>answers only in dated facts]
+    READER -->|grounded, voted, graded| EVENTS[(Evidence events)]
+
+    DISC[Active discovery<br/>records requests on a cadence] -->|unanswered past the<br/>response window| EVENTS
+    LEDGER --> DISC
+
+    LEDGER --> RECON[Reconciliation<br/>owed − delivered − excused<br/>undocumented kept apart]
+    EVENTS --> RECON
+
+    LEDGER --> CLOCKS[Deadline clocks<br/>statutory lead times]
+
+    RECON --> DECIDE{Does this need<br/>the parent?}
+    CLOCKS --> DECIDE
+    DISC --> DECIDE
+
+    DECIDE -->|most weeks| QUIET[Nothing needs you]
+    DECIDE -->|a real decision| CARD[Decision card<br/>+ compiled draft letter]
+    CARD -->|new this wake, never repeated| EMAIL[Decision notice by email<br/>links to the card · decides nothing]
+
+    RECON --> STMT[Monthly Statement]
+    CLOCKS --> STMT
+
+    CARD -->|interrupt: parent approves| SEND[Ready to send<br/>the parent posts it]
+    CARD -.->|parent declines,<br/>recorded either way| AUDIT
+
+    SEND -->|parent reports the<br/>date of receipt| DISC
+    SEND --> AUDIT
+    DISC --> AUDIT
+
+    style QUIET fill:#e8f5e9,stroke:#66bb6a
+    style CARD fill:#fff3e0,stroke:#ffa726
+    style AUDIT fill:#eceff1,stroke:#90a4ae
+    style READER fill:#f3e5f5,stroke:#ab47bc
+    style TRANSCRIBER fill:#f3e5f5,stroke:#ab47bc
+    style EMAIL fill:#e3f2fd,stroke:#42a5f5

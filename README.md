@@ -90,6 +90,8 @@ flowchart TB
     style EMAIL fill:#e3f2fd,stroke:#42a5f5
 ```
 
+A rendered copy is at [docs/architecture.png](docs/architecture.png); the source is [docs/architecture.mmd](docs/architecture.mmd).
+
 The engine is deterministic wherever correctness matters. The model reads unstructured text and writes connective prose; it never decides a number, a date, or whether a school fell short. That division is why the arithmetic is reproducible and why the test suite can verify it without a network.
 
 ### How a document gets in
