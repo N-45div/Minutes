@@ -151,6 +151,12 @@ input[type="file"]::file-selector-button:hover { background: var(--paper); borde
 .orrule::before, .orrule::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
 .transcript { margin: 12px 0; border-left: 2px solid var(--slate); background: var(--paper-2); padding: 12px 14px; }
 .transcript .cap { font: 400 13px/1.5 var(--sans); color: var(--ink-2); margin-bottom: 8px; }
+.notify { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); font: 400 14px/1.5 var(--sans); color: var(--ink-2); }
+.notify b { color: var(--ink); font-weight: 600; }
+.notify form.inline { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.notify form.inline label { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.notify input[type="email"] { font: 400 14px/1.4 var(--sans); padding: 7px 10px; border: 1px solid var(--rule); background: var(--paper); color: var(--ink); min-width: 220px; }
+.notify .note { display: block; margin-top: 6px; }
 .transcript pre { font: 400 13px/1.6 ui-monospace, Consolas, monospace; color: var(--ink); white-space: pre-wrap; margin: 0; overflow-x: auto; }
 .instructed-note { font: 400 14px/1.5 var(--sans); color: var(--ink-2); background: var(--paper-2); border-left: 2px solid var(--ink-3); padding: 10px 12px; margin: 10px 0 4px; }
 .instructed-note b { color: var(--ink); font-weight: 600; }

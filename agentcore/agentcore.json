@@ -24,11 +24,23 @@
         {
           "name": "MINUTES_SESSION_PREFIX",
           "value": "cases/"
+        },
+        {
+          "name": "MINUTES_NOTIFY_FROM",
+          "value": "ndivij2004@gmail.com"
+        },
+        {
+          "name": "MINUTES_APP_URL",
+          "value": "https://ll5ow2w2zjrym6om6z7grtmcc40cttrr.lambda-url.us-east-1.on.aws"
         }
       ],
       "additionalPolicies": [
-        "agentcore/policies/state-bucket.json"
-      ]
+        "agentcore/policies/state-bucket.json",
+        "agentcore/policies/ses-send.json"
+      ],
+      "instrumentation": {
+        "enableOtel": true
+      }
     }
   ],
   "memories": [],

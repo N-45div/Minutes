@@ -63,6 +63,8 @@ The remaining actions are how a parent runs THEIR case rather than the sample:
     {"action": "add_correspondence", ...}                  a pasted school item, classified
     {"action": "list_evidence"} / {"action": "deadlines"}  the record, newest first
     {"action": "mark_received", "request_id": ..., "received_on": ...}
+    {"action": "set_notify_email", "email": ...}         where a decision notice goes
+    {"action": "notify_status"}                          whether that address is ready
 
 ``add_note`` and ``mark_received`` are deterministic. ``ingest_iep`` and
 ``add_correspondence`` are the only two actions here that run a model, and
@@ -86,6 +88,7 @@ import binascii
 import contextvars
 import hashlib
 import os
+import re
 import tempfile
 import threading
 import uuid
@@ -108,6 +111,7 @@ from minutes.correspondence import attributed, load_correspondence
 from minutes.cycle import CycleOutcome, RaisedCard, run_cycle
 from minutes.deadlines import evaluate_deadlines
 from minutes.extraction import extract_ledger
+from minutes.notify import SesMailer, notification_for, recipient_is_ready
 from minutes.models import (
     Attachment,
     AttachmentKind,
@@ -141,6 +145,17 @@ STATE_DIR = Path(os.environ.get("MINUTES_STATE_DIR", Path(tempfile.gettempdir())
 # unset on a laptop, where the session is a directory under STATE_DIR.
 STATE_BUCKET = os.environ.get("MINUTES_SESSION_BUCKET") or None
 STATE_PREFIX = os.environ.get("MINUTES_SESSION_PREFIX", "cases/")
+
+# The decision notice. Both are set on the runtime (agentcore/agentcore.json)
+# and unset on a laptop, where a wake that finds a decision simply returns it.
+# The sender is an SES identity the account has verified; the app URL is where
+# the email points -- the This Week screen, which is the only place a letter
+# can be read and released. Neither is ever a secret: the demo key is not in
+# the email, and the link decides nothing.
+NOTIFY_FROM = os.environ.get("MINUTES_NOTIFY_FROM") or None
+APP_URL = os.environ.get("MINUTES_APP_URL") or None
+
+_EMAIL_SHAPE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 # DEFAULT_CASE_ID, the read-only sample, is minutes.cases.DEFAULT_CASE_ID and is
 # imported above so the runtime and the store cannot name it differently.
@@ -276,6 +291,13 @@ def _wake(worker: Caseworker, payload: dict) -> dict:
     )
     worker.sync()
 
+    # The parent is told before the interrupt is raised, not after: the ask
+    # below calls a model and can fail or run long, and a notice that depended
+    # on it would be a notice that sometimes never went. Sending is gated on
+    # the cards being NEW, so the interactive wake and the scheduled one share
+    # this line and a parent hears about each decision exactly once.
+    notification = _notify_if_needed(worker, case, outcome, payload)
+
     # The loop closes here. A wake that found a letter does not leave it in a
     # JSON list nobody reads: it puts the release decision to the parent
     # through the same interrupt the interactive path uses.
@@ -295,6 +317,7 @@ def _wake(worker: Caseworker, payload: dict) -> dict:
         "new_cards": [card.model_dump(mode="json") for card in outcome.new_cards],
         "suppressed": len(outcome.suppressed_cards),
         "due_requests": [request.model_dump(mode="json") for request in outcome.due_requests],
+        "notification": notification,
     }
 
 
@@ -375,6 +398,170 @@ def _record_failure(worker: Caseworker, run_id: str, exc: BaseException) -> None
         worker.sync()
     except Exception:
         app.logger.exception("could not record the failure of background wake %s", run_id)
+
+
+_mailer_cache: SesMailer | None = None
+
+
+def _mailer() -> SesMailer | None:
+    """The one SES client, or None where notifications are not configured.
+
+    None is the laptop and the test suite. A wake there still finds the
+    decision and still returns it; it just has no one to tell. Tests replace
+    this function to hand the app a fake, which is why it is a function and not
+    a module constant.
+    """
+    global _mailer_cache
+    if not NOTIFY_FROM or not APP_URL:
+        return None
+    if _mailer_cache is None:
+        import boto3
+
+        from minutes.config import BEDROCK_REGION
+
+        _mailer_cache = SesMailer(boto3.client("sesv2", region_name=BEDROCK_REGION), NOTIFY_FROM)
+    return _mailer_cache
+
+
+def _audit(worker: Caseworker, day: date, action: str, detail: str) -> None:
+    """A line in the case's own trail about the notice. Best effort, like _record_failure."""
+    try:
+        record_action(
+            worker.agent,
+            AuditEntry(entry_date=day, actor="notify", action=action, detail=detail),
+        )
+    except Exception:  # noqa: BLE001 -- a trail that cannot be written must not fail the wake
+        app.logger.exception("could not record a notification entry in the trail")
+
+
+def _notify_if_needed(worker: Caseworker, case, outcome: CycleOutcome, payload: dict) -> dict | None:
+    """Tell the parent a decision is waiting -- only when one newly is.
+
+    This is the step that makes "a background agent that surfaces only for
+    real decisions" true for a parent who is not watching. Everything about it
+    is gated on ``outcome.new_cards``: the cards the engine raised this wake
+    and had not raised before. A quiet week sends nothing. A card the parent
+    was already shown sends nothing. Nothing here is ever a reason to skip the
+    interrupt below it -- the email is a notice, and the decision still waits
+    in the app for a person to read the letter and answer.
+
+    The email itself cannot act. It links to the case; it carries no approve or
+    decline, because mail providers fetch every link in a message the instant
+    it arrives, and an approve-by-link would release a letter to a district no
+    human read. That rule lives in :mod:`minutes.notify`; this function only
+    decides whether to send.
+
+    A failure to send is recorded in the case's trail and returned, never
+    raised. A week nobody was told about must not read like a quiet week --
+    but it must not turn into a wake that did not happen either.
+    """
+    if not outcome.new_cards or payload.get("notify") is False:
+        return None
+    mailer = _mailer()
+    if mailer is None:
+        return None
+    email = (case_store().read_meta(case.case_id) or {}).get("notify_email")
+    if not email:
+        return None
+
+    count = len(outcome.new_cards)
+    noun = "decision" if count == 1 else "decisions"
+    try:
+        status = mailer.status(email)
+        if not recipient_is_ready(status):
+            _audit(
+                worker,
+                outcome.today,
+                "decision notice held",
+                f"{count} new {noun} to tell {email} about, but that address has not confirmed "
+                f"itself with SES yet ({status or 'not started'}). The decision still waits in the app.",
+            )
+            return {"held": True, "to": email, "verification": status, "decisions": count}
+
+        notice = notification_for(
+            case_id=case.case_id,
+            student_alias=case.ledger.student_alias,
+            cards=list(outcome.new_cards),
+            app_url=APP_URL,
+            today=outcome.today,
+        )
+        message_id = mailer.send(email, notice)
+        _audit(
+            worker,
+            outcome.today,
+            "emailed a decision notice",
+            f"Told {email} that {count} new {noun} need them (SES message {message_id or 'sent'}). "
+            "The email links to the case and cannot approve or decline anything.",
+        )
+        return {"sent": True, "to": email, "message_id": message_id, "decisions": count}
+    except Exception as exc:  # noqa: BLE001 -- recorded, returned, never raised
+        app.logger.exception("decision notice to %s failed", email)
+        _audit(
+            worker,
+            outcome.today,
+            "decision notice failed",
+            f"Could not email {email} about {count} new {noun}: {type(exc).__name__}: {exc}. "
+            "The decision still waits in the app.",
+        )
+        return {"error": f"{type(exc).__name__}: {exc}", "to": email, "decisions": count}
+
+
+def _set_notify_email(case_id: str, payload: dict) -> dict:
+    """Where a decision notice for this case goes. Starts SES's own confirmation.
+
+    In sandbox SES delivers only to addresses it has verified, so setting an
+    address here also asks SES to email that address a confirmation link. Until
+    the parent clicks it, a wake that finds a decision holds the notice and
+    says so in the trail. An empty address clears it.
+    """
+    _writable(case_id)
+    if not case_store().exists(case_id):
+        raise ValueError(f"unknown case {case_id!r}; ingest_iep creates a case")
+
+    raw = payload.get("email")
+    if raw in (None, ""):
+        case_store().touch(case_id, notify_email=None)
+        return {"status": "done", "email": None, "verification": None, "ready": False}
+
+    email = str(raw).strip().lower()
+    if not _EMAIL_SHAPE.fullmatch(email):
+        raise ValueError("'email' does not look like an address")
+
+    mailer = _mailer()
+    if mailer is None:
+        raise ValueError(
+            "notifications are not configured on this deployment; the runtime needs "
+            "MINUTES_NOTIFY_FROM (a verified SES sender) and MINUTES_APP_URL"
+        )
+    mailer.verify(email)
+    case_store().touch(case_id, notify_email=email)
+    status = mailer.status(email)
+    return {
+        "status": "done",
+        "email": email,
+        "verification": status,
+        "ready": recipient_is_ready(status),
+        "note": (
+            "Amazon Web Services has sent that address a confirmation email. Until the link in it "
+            "is clicked, Minutes holds the notice and the decision waits in the app."
+            if not recipient_is_ready(status)
+            else "That address is confirmed. A wake that finds a new decision will email it."
+        ),
+    }
+
+
+def _notify_status(case_id: str) -> dict:
+    """Whether this case can be told about a decision, and by what address."""
+    mailer = _mailer()
+    email = (case_store().read_meta(case_id) or {}).get("notify_email") if not is_sample(case_id) else None
+    status = mailer.status(email) if (mailer is not None and email) else None
+    return {
+        "status": "done",
+        "configured": mailer is not None,
+        "email": email,
+        "verification": status,
+        "ready": recipient_is_ready(status),
+    }
 
 
 def _background_wake(worker: Caseworker, payload: dict, case: str) -> dict:
@@ -1095,10 +1282,15 @@ def invoke(payload: dict, context) -> dict:
             }
         if action == "mark_received":
             return _mark_received(worker, payload)
+        if action == "set_notify_email":
+            return _set_notify_email(case, payload)
+        if action == "notify_status":
+            return _notify_status(case)
         raise ValueError(
             f"unknown action {action!r}; expected one of wake, statement, status, ask, "
             "answer, outbox, declined, audit, requests, case, ingest_iep, add_note, "
-            "add_correspondence, list_evidence, deadlines, mark_received"
+            "add_correspondence, list_evidence, deadlines, mark_received, set_notify_email, "
+            "notify_status"
         )
     except ValueError as exc:
         return {"status": "error", "error": str(exc), "session_id": session_id}

@@ -8,7 +8,8 @@
 
    Runtime actions used here, and nothing else: ingest_iep, wake, answer,
    list_evidence, add_note, add_correspondence, statement, outbox, declined,
-   mark_received, requests, deadlines, audit. Where the runtime's reply lacks a
+   mark_received, requests, deadlines, audit, pending, notify_status,
+   set_notify_email. Where the runtime's reply lacks a
    field, the view degrades and a comment beside it says what was missing. */
 
 (function () {
@@ -171,7 +172,16 @@
     del: function (k) { try { sessionStorage.removeItem(k); } catch (e) {} }
   };
   function apiBase() { return store.get('minutes.apiBase') || '/api'; }
-  function apiKey() { return store.get('minutes.key') || ''; }
+  // The key is the one thing kept across tabs. A decision notice arrives by
+  // email and opens the case in a NEW tab; a key that lived only in this tab
+  // would strand that parent on a screen that cannot reach the runtime. It is
+  // remembered on this browser and nowhere else -- it never rides in the
+  // email, whose link carries no key and decides nothing.
+  var keyStore = {
+    get: function () { try { return localStorage.getItem('minutes.key') || sessionStorage.getItem('minutes.key') || ''; } catch (e) { return ''; } },
+    set: function (v) { try { localStorage.setItem('minutes.key', v); } catch (e) { store.set('minutes.key', v); } }
+  };
+  function apiKey() { return keyStore.get(); }
   function caseCtx(id) {
     try { return JSON.parse(store.get('minutes.case.' + id) || '{}'); } catch (e) { return {}; }
   }
@@ -198,7 +208,7 @@
     var k = /[#?&]key=([^&]+)/.exec(h);
     var a = /[?&]asof=(\d{4}-\d{2}-\d{2})/.exec(h);
     if (!k && !a) return;
-    if (k) store.set('minutes.key', decodeURIComponent(k[1]));
+    if (k) keyStore.set(decodeURIComponent(k[1]));
     if (a) { var c = /#\/case\/([^/?&]+)/.exec(h); if (c && decodeURIComponent(c[1]) === SAMPLE_CASE) setAsOf(SAMPLE_CASE, a[1]); }
     var rest = h.replace(/[?&](key|asof)=[^&]+/g, '').replace(/^#key=[^&]+&?/, '#').replace(/\?$/, '');
     if (rest === '#' || rest === '') rest = '#/';
@@ -792,6 +802,52 @@
     store.set(pendingKey(state.id), JSON.stringify({ today: state.wake.today, wake: wake, interrupts: state.interrupts, new_cards: state.wake.new_cards || [], settled: state.settled }));
   }
 
+  // Where a decision notice goes. Minutes wakes on its own every week; the
+  // weeks it finds a decision are the weeks nobody is looking at this screen,
+  // so it emails. The email links here and decides nothing. Hidden on the
+  // sample case and on a deployment with no sender configured.
+  function renderNotify(id) {
+    var box = document.getElementById('notify-line');
+    if (!box || id === SAMPLE_CASE) return;
+    call({ action: 'notify_status', case_id: id }).then(function (st) {
+      if (!box.isConnected || st.status !== 'done' || !st.configured) return;
+      paintNotify(box, id, st);
+    }).catch(function () {});
+  }
+
+  function paintNotify(box, id, st) {
+    var line;
+    if (st.email && st.ready) {
+      line = 'When a check finds a decision, Minutes emails <b>' + esc(st.email) + '</b>. ' +
+        '<button type="button" class="link small" id="notify-change">Change</button>';
+    } else if (st.email) {
+      line = '<b>' + esc(st.email) + '</b> has not confirmed yet. Look in that inbox for a message from Amazon Web Services and click its link; until then a decision waits here without an email. ' +
+        '<button type="button" class="link small" id="notify-resend">Resend</button> · ' +
+        '<button type="button" class="link small" id="notify-change">Change</button>';
+    } else {
+      line = '<form id="notify-form" class="inline"><label>Email me when a decision needs you ' +
+        '<input type="email" name="email" required placeholder="you@example.com" autocomplete="email"></label> ' +
+        '<button type="submit" class="small">Save</button></form>';
+    }
+    box.innerHTML = '<div class="notify">' + line + '<span class="note" id="notify-status"></span></div>';
+
+    var status = document.getElementById('notify-status');
+    function save(email) {
+      status.textContent = 'Saving…';
+      call({ action: 'set_notify_email', case_id: id, email: email }).then(function (res) {
+        if (res.status === 'error') { status.textContent = res.error; return; }
+        paintNotify(box, id, { configured: true, email: res.email, ready: res.ready });
+        if (res.note) toast(res.note);
+      }).catch(function (err) { status.textContent = err.message || String(err); });
+    }
+    var form = document.getElementById('notify-form');
+    if (form) form.addEventListener('submit', function (e) { e.preventDefault(); save(form.email.value.trim()); });
+    var change = document.getElementById('notify-change');
+    if (change) change.addEventListener('click', function () { paintNotify(box, id, { configured: true, email: null, ready: false }); });
+    var resend = document.getElementById('notify-resend');
+    if (resend) resend.addEventListener('click', function () { save(st.email); });
+  }
+
   function renderWeek(id, wake, cached) {
     var state = { id: id, wake: wake, interrupts: [], settled: {}, lastMessage: '' };
     var approval = wake.approval;
@@ -819,10 +875,12 @@
       '<div class="week"><div class="eyebrow">This week’s check' + (wake.today ? ' · ' + esc(fmtDate(wake.today)) : '') + (fromCache ? ' · <button type="button" class="link small" id="recheck">Check again</button>' : '') + '</div>' +
       '<div id="headline">' + headlineHtml(wake.headline, wake.quiet && !anyOpen) + '</div>' +
       (wake.quiet && !anyOpen ? '<p class="reassure">Every service was reconciled, every date was read, and nothing needs a decision from you. Minutes will check again next week.</p>' : '') +
-      '<ul class="checked">' + checked.join('') + '</ul></div>' +
+      '<ul class="checked">' + checked.join('') + '</ul>' +
+      '<div id="notify-line"></div></div>' +
       '<div id="decisions"></div>';
     setMain(html);
     bindAsOf(id);
+    renderNotify(id);
     var re = document.getElementById('recheck');
     if (re) re.addEventListener('click', function () { viewWeek(id, function () { return true; }, true); });
     renderDecisions(state);

@@ -51,6 +51,8 @@ flowchart TB
     AUDIT[(Audit log — every action,<br/>dated, with its evidence)]
 
     IEP -->|extract once, cached| LEDGER[(Obligations ledger<br/>typed, every fact cited)]
+    PHOTO[Photograph of a page] -->|pixels in, a string out| TRANSCRIBER[Transcriber agent<br/>no tools · no memory<br/>answers only in text]
+    TRANSCRIBER -->|the transcript is the body| MAIL
     MAIL -->|fenced as a quoted document| READER[Reader agent<br/>no tools · no memory<br/>answers only in dated facts]
     READER -->|grounded, voted, graded| EVENTS[(Evidence events)]
 
@@ -68,6 +70,7 @@ flowchart TB
 
     DECIDE -->|most weeks| QUIET[Nothing needs you]
     DECIDE -->|a real decision| CARD[Decision card<br/>+ compiled draft letter]
+    CARD -->|new this wake, never repeated| EMAIL[Decision notice by email<br/>links to the card · decides nothing]
 
     RECON --> STMT[Monthly Statement]
     CLOCKS --> STMT
@@ -83,6 +86,8 @@ flowchart TB
     style CARD fill:#fff3e0,stroke:#ffa726
     style AUDIT fill:#eceff1,stroke:#90a4ae
     style READER fill:#f3e5f5,stroke:#ab47bc
+    style TRANSCRIBER fill:#f3e5f5,stroke:#ab47bc
+    style EMAIL fill:#e3f2fd,stroke:#42a5f5
 ```
 
 The engine is deterministic wherever correctness matters. The model reads unstructured text and writes connective prose; it never decides a number, a date, or whether a school fell short. That division is why the arithmetic is reproducible and why the test suite can verify it without a network.
@@ -225,6 +230,10 @@ python scripts/schedule_weekly.py --delete    # take it all back off the account
 ```
 
 Scheduler waits for the runtime's reply and gives up within seconds, while a wake that finds a decision calls a model. So a scheduled wake is sent with `"background": true`: the runtime acknowledges at once with the run's id, finishes the work in the background under AgentCore's async-task tracking, records any failure in the case's audit trail, and refuses a second wake for a case that is already in flight. `{"action": "status", "run_id": ...}` reports what a run did. A weekly firing costs nothing measurable.
+
+**Telling the parent.** The weeks a scheduled wake finds a decision are exactly the weeks nobody is looking at the app, so the wake emails. `{"action": "set_notify_email", "email": ...}` puts an address on the case; Amazon SES sends that address its own confirmation link, and until it is clicked a wake that finds a decision holds the notice and says so in the audit trail. The email is built deterministically from the cards the engine already raised (`minutes/notify.py`), goes out only for a decision that is **new** this wake — a quiet week sends nothing, a card the parent was already shown sends nothing — and it is written under two rules. It links to the case and never acts: no approve link, no decline link, because a mail provider fetches every link the moment a message lands, and an approve-by-link would release a letter to a district no human read. And it says a letter is waiting without saying what the letter says; the compiled letter belongs behind the app, shown to the parent, not sitting in an inbox. The runtime needs `MINUTES_NOTIFY_FROM` (a verified SES sender) and `MINUTES_APP_URL`, both set in `agentcore/agentcore.json`; the runtime role gains `ses:SendEmail` and the two identity calls from `agentcore/policies/ses-send.json`. SES starts every account in sandbox, which delivers only to verified addresses — enough for a family's own inbox, and the demo.
+
+**Seeing what it did.** The runtime is deployed with `instrumentation.enableOtel` on, so every invocation — each tool call the caseworker makes, each model turn, each interrupt it raises — lands as a trace in Amazon CloudWatch under AgentCore Observability, beside the audit trail the agent writes for the parent. The trail is the family's record; the traces are the engineer's.
 
 **Hosting the app.** The runtime accepts SigV4-signed calls and nothing else, so a browser cannot reach it and must never be handed credentials that could. `web/lambda_function.py` is the proxy in between, and `scripts/deploy_web.py` puts it on the account as one Lambda behind a Lambda Function URL. One URL is the whole application: the function serves `site/` itself (any path that is not an asset comes back as `index.html`, so the hash router works from a cold link) and forwards `POST /api` to the runtime under its own role — a role allowed to invoke exactly this runtime and write its own logs, and nothing else.
 
