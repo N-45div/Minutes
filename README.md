@@ -8,6 +8,18 @@ So the promise quietly goes unkept, and the only person positioned to notice is 
 
 Minutes is a background agent, built with the **Strands Agents SDK** and deployed on **Amazon Bedrock AgentCore**, that keeps that ledger. It reads the IEP once, reconciles the evidence against it, works out when the school's own records are due to be asked for, and stays silent — until there is a decision only the parent can make. When one arrives, the agent pauses on a Strands interrupt and nothing leaves the family until the parent answers.
 
+## See it work in five minutes
+
+The live app is linked from the submission. Everything below runs against the deployed agent.
+
+1. **Try the sample case**, set *as of* to **1 December 2026** on This Week. Two decisions come back with their compiled letters — every factual sentence footnoted to a dated record. Release one to the outbox; decline the other. Open *What Minutes did*: asked, released, asked, declined, and the send tool refused by policy on the declined one.
+2. **Start your case** and choose the IEP as a PDF — a scanned one works. The ledger appears with the sentence each obligation came from.
+3. On **Evidence**, photograph a service log. The transcript appears, then the dated facts it grounds — including the reason a row gives for a missed session.
+4. Paste [`fixtures/injected_school_email.md`](fixtures/injected_school_email.md) into *Paste correspondence*. It is filed word for word, flagged, and establishes nothing. The Statement does not move.
+5. Put your address on the case, wake it on 1 December, and the email arrives — one link, to the case, that decides nothing.
+
+Every one of those runs was also verified against the deployed runtime before submission, and the audit trail on the case records each step.
+
 ## How it works
 
 **1. The promise becomes a ledger.** The IEP is extracted once into typed obligations — minutes per session, sessions per period, provider, setting, start and end dates — and every statutory deadline it names. Every extracted fact carries the verbatim sentence it came from.
@@ -174,6 +186,29 @@ means "ignored".
 
 To see it: paste `fixtures/injected_school_email.md` into **Evidence → Paste
 correspondence** on a case of your own.
+
+## Where the Strands Agents SDK and AgentCore are used
+
+Judged on how thoroughly the SDK is used, so here is the map — each primitive, the file, and the reason it is there rather than something simpler.
+
+| Primitive | Where | Why it is the right tool |
+|---|---|---|
+| `Agent` + `@tool` | [`minutes/agent.py`](minutes/agent.py), [`minutes/tools.py`](minutes/tools.py) | The caseworker: fifteen tools over a deterministic engine. The model decides what to look at and when; the tools compute every figure. |
+| `structured_output` | [`minutes/extraction.py`](minutes/extraction.py), [`minutes/correspondence.py`](minutes/correspondence.py) | The IEP becomes a typed ledger in one call; school mail becomes typed drafts that the deterministic gates then vote on and ground. |
+| Multimodal content blocks | [`minutes/extraction.py`](minutes/extraction.py) (document), [`minutes/transcribe.py`](minutes/transcribe.py) (image) | A scanned PDF and a photographed page go in as Bedrock document and image blocks — no OCR dependency. |
+| Interrupts (`tool_context.interrupt`) | [`minutes/agent.py`](minutes/agent.py) `send_records_request`, `send_letter` | The product mechanic. The tool compiles the letter, halts, and the parent's answer to *that* interrupt — bound to a digest of the letter shown — is the only thing that lets it continue. |
+| Interventions + Cedar | [`minutes/interventions.py`](minutes/interventions.py), [`minutes/policy/minutes.cedar`](minutes/policy/minutes.cedar) | "Nothing leaves without the parent" enforced by the framework before every tool call, deny-by-default, with the parent's answer read from interrupt state and never from tool input. A test fails the build if a tool is added without a policy line. |
+| Hooks (`AuditTrail`) | [`minutes/agent.py`](minutes/agent.py) | Every tool call to an append-only trail the parent can read. The paper trail is the product. |
+| Three agents, `tools=()` on two | [`minutes/correspondence.py`](minutes/correspondence.py) `build_reader`, [`minutes/transcribe.py`](minutes/transcribe.py) `build_transcriber`, [`minutes/reader.py`](minutes/reader.py) | Untrusted text and pixels go to agents that can only answer in typed facts or a string; the caseworker never sees a document. The reader is also a tool on the caseworker (agents-as-tools). |
+| `S3SessionManager` / `FileSessionManager` | [`minutes/agent.py`](minutes/agent.py), [`app.py`](app.py) | The case lives in S3 keyed by case, so a parent asked on Monday can answer on Thursday from a microVM that did not exist when the question was asked. |
+| Execution `Limits` | [`minutes/agent.py`](minutes/agent.py) | Every invocation is capped, and a limit trip is written to the trail — a truncated run must not read like a finished one. |
+| AgentCore Runtime (CodeZip) + async tasks | [`app.py`](app.py), [`agentcore/agentcore.json`](agentcore/agentcore.json) | `BedrockAgentCoreApp` entrypoint; scheduled wakes are acknowledged at once and finished under `add_async_task`, with duplicate and in-flight guards. |
+| EventBridge Scheduler → `InvokeAgentRuntime` | [`scripts/schedule_weekly.py`](scripts/schedule_weekly.py) | The agent wakes itself every Monday with no Lambda in between, through a role allowed to do exactly one thing. |
+| AgentCore Observability (OTel) | [`agentcore/agentcore.json`](agentcore/agentcore.json) | Every tool call, model turn and interrupt is a trace in CloudWatch, beside the trail the agent writes for the family. |
+| Amazon SES | [`minutes/notify.py`](minutes/notify.py) | The wake that finds a decision tells the parent — with a link that decides nothing. |
+| Amazon S3 case store | [`minutes/cases.py`](minutes/cases.py) | Ledger, correspondence, events, and the photographs a transcript was read from, per case. |
+
+Not used, on purpose: `Swarm` and `Graph` (dependent nodes would see raw school text, which the whole design exists to prevent), and `HumanInTheLoop` (it would approve the tool *call* sight-unseen and then approve the letter — one gate on the letter itself is the honest shape).
 
 ## Quickstart
 

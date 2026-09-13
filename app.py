@@ -181,6 +181,32 @@ def _case_key(payload: dict) -> str:
     return validate_case_id((payload or {}).get("case_id") or DEFAULT_CASE_ID)
 
 
+_VISITOR = re.compile(r"^[a-z0-9]{8,32}$")
+
+
+def _worker_key(payload: dict) -> str:
+    """Which caseworker serves this request. The case, except on the sample.
+
+    A parent's case is the unit, and :func:`_case_key` says so. The sample is
+    not a parent's case: it is a demo, and a demo whose interrupts, outbox and
+    raised-card set are shared by everyone holding the key is a demo only the
+    first visitor sees. The first person to release or decline the letter left
+    every later person a quiet page saying the decisions had already been put
+    to them.
+
+    So a browser sends a ``visitor`` token with the sample only, and gets a
+    session of its own -- the same fixture, replayed fresh. A malformed or
+    missing token falls back to the shared session rather than failing: it is
+    the sample, and a script that never sent one still works as before. Real
+    cases ignore the token entirely.
+    """
+    case = _case_key(payload)
+    visitor = str((payload or {}).get("visitor") or "").strip().lower()
+    if is_sample(case) and _VISITOR.fullmatch(visitor):
+        return f"{case}--{visitor}"
+    return case
+
+
 def _caseworker(key: str) -> Caseworker:
     worker = _caseworkers.get(key)
     if worker is None:
@@ -838,7 +864,7 @@ def _empty_case(case_id: str) -> dict:
     }
 
 
-def _case(case_id: str) -> dict:
+def _case(case_id: str, worker_key: str | None = None) -> dict:
     """The ledger as the parent should see it, and how much evidence stands behind it.
 
     An unknown id is not an error: a front end asking "is there a case here
@@ -867,7 +893,7 @@ def _case(case_id: str) -> dict:
         "counts": {
             "events": len(case.events),
             "correspondence": case.correspondence_items,
-            "requests": len(case_requests(_caseworker(case_id).agent, case)),
+            "requests": len(case_requests(_caseworker(worker_key or case_id).agent, case)),
         },
     }
 
@@ -1240,7 +1266,7 @@ def invoke(payload: dict, context) -> dict:
         if action == "status":
             return _status(payload)
         if action == "case":
-            return _case(case)
+            return _case(case, _worker_key(payload))
         if action == "ingest_iep":
             return _ingest_iep(case, payload)
         if action == "add_note":
@@ -1252,7 +1278,7 @@ def invoke(payload: dict, context) -> dict:
         if action == "deadlines":
             return _deadlines(case, payload)
 
-        worker = _caseworker(case)
+        worker = _caseworker(_worker_key(payload))
         if action == "wake":
             if payload.get("background"):
                 return _background_wake(worker, payload, case)

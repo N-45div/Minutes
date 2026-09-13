@@ -182,6 +182,23 @@
     set: function (v) { try { localStorage.setItem('minutes.key', v); } catch (e) { store.set('minutes.key', v); } }
   };
   function apiKey() { return keyStore.get(); }
+
+  // The sample case replays fresh for every browser. Its session -- the
+  // letters put to you, the outbox, what an earlier check already raised --
+  // would otherwise be shared by everyone holding the key, and the first
+  // person to answer the letter would leave everyone after them a quiet page.
+  // Real cases never send this: a family's case is one session, wherever it
+  // is opened from.
+  function visitorId() {
+    var v = '';
+    try { v = localStorage.getItem('minutes.visitor') || ''; } catch (e) {}
+    if (!/^[a-z0-9]{8,32}$/.test(v)) {
+      v = '';
+      for (var i = 0; i < 16; i++) v += Math.floor(Math.random() * 36).toString(36);
+      try { localStorage.setItem('minutes.visitor', v); } catch (e) {}
+    }
+    return v;
+  }
   function caseCtx(id) {
     try { return JSON.parse(store.get('minutes.case.' + id) || '{}'); } catch (e) { return {}; }
   }
@@ -223,6 +240,7 @@
 
   function call(payload, opts) {
     opts = opts || {};
+    if (payload && payload.case_id === SAMPLE_CASE && !payload.visitor) payload.visitor = visitorId();
     var headers = { 'Content-Type': 'application/json' };
     if (apiKey()) headers['x-minutes-key'] = apiKey();
     var base = apiBase();

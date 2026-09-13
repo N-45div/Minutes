@@ -189,6 +189,33 @@ def test_the_caseworker_is_keyed_by_the_case_with_or_without_a_bucket(monkeypatc
     assert app._case_key({}) == app.DEFAULT_CASE_ID
 
 
+def test_the_sample_case_replays_fresh_for_each_visitor():
+    """The demo hazard: a shared session means only the first judge sees the decisions.
+
+    Two browsers, two visitor tokens, the same 1 December wake. Each must find
+    the two decisions NEW, because neither has been shown them -- and the
+    second wake on each must suppress only what that visitor saw.
+    """
+    first = _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False, "visitor": "judgeaaaa1111"})
+    second = _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False, "visitor": "judgebbbb2222"})
+
+    assert len(first["new_cards"]) == 2 and first["suppressed"] == 0
+    assert len(second["new_cards"]) == 2 and second["suppressed"] == 0, "the second visitor is not quiet"
+
+    again = _invoke({"action": "wake", "today": "2026-12-02", "ask_parent": False, "visitor": "judgeaaaa1111"})
+    assert again["new_cards"] == [] and again["suppressed"] == 2, "each visitor's own replay still suppresses"
+
+
+def test_the_visitor_token_is_ignored_off_the_sample_and_when_malformed():
+    assert app._worker_key({"case_id": app.DEFAULT_CASE_ID, "visitor": "judgeaaaa1111"}) == "maya-demo--judgeaaaa1111"
+    assert app._worker_key({"case_id": app.DEFAULT_CASE_ID}) == app.DEFAULT_CASE_ID
+    assert app._worker_key({"case_id": app.DEFAULT_CASE_ID, "visitor": "../etc"}) == app.DEFAULT_CASE_ID
+    assert app._worker_key({"case_id": app.DEFAULT_CASE_ID, "visitor": "short"}) == app.DEFAULT_CASE_ID
+    assert app._worker_key({"case_id": "case-4242", "visitor": "judgeaaaa1111"}) == "case-4242", (
+        "a family's case is one session wherever it is opened from"
+    )
+
+
 @pytest.mark.parametrize("bad", ["short", "has space-in-it", "-leading-dash", "x" * 65, 42])
 def test_a_malformed_case_id_is_refused_before_anything_is_built(bad, monkeypatch):
     monkeypatch.setattr(app, "_caseworker", lambda case_id: pytest.fail("an agent was built"))
