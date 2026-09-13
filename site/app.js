@@ -244,14 +244,12 @@
     var headers = { 'Content-Type': 'application/json' };
     if (apiKey()) headers['x-minutes-key'] = apiKey();
     var base = apiBase();
-    // The proxy refuses every call without a key, so a browser that has none
-    // should not make one -- it should say what happened. The usual way to
-    // arrive here keyless is a decision-notice email opened on a browser that
-    // has never had the key: the link carries none on purpose.
-    if (!apiKey() && /\/api\/?$/.test(base)) {
-      return Promise.reject(new ApiError('This browser has no key for Minutes yet.',
-        'If you came here from an email: open Minutes once from the link you were first given — it carries the key, and this browser remembers it — then come back to this page. Or paste the key under Settings.'));
-    }
+    // A browser with no key still makes the call. Behind the public address
+    // the edge supplies the key on every request, so the page simply works;
+    // on the raw Function URL the proxy answers 401 and the message below
+    // says what to do. The usual way to arrive here keyless is a
+    // decision-notice email opened on a browser that has never had the key:
+    // the link carries none on purpose.
     var controller = typeof AbortController === 'function' ? new AbortController() : null;
     var timer = null;
     if (controller && opts.timeoutMs) timer = setTimeout(function () { controller.abort(); }, opts.timeoutMs);
@@ -271,8 +269,8 @@
           var data = null;
           try { data = JSON.parse(text); } catch (e) {}
           if (res.status === 401 || res.status === 403) {
-            throw new ApiError('The key was refused (HTTP ' + res.status + ').',
-              'Open the link you were given again — it carries the key — or paste the key under Settings.');
+            throw new ApiError(apiKey() ? 'The key was refused (HTTP ' + res.status + ').' : 'This browser has no key for Minutes yet.',
+              'Open the link you were given again — it carries the key, and this browser remembers it — or paste the key under Settings.');
           }
           if (data == null) {
             throw new ApiError('Minutes answered with something that is not JSON (HTTP ' + res.status + ').',
