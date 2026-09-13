@@ -59,6 +59,10 @@ The rest of the month, the agent is quiet. That silence is the feature.
 
 ## Architecture
 
+![Minutes architecture: one weekly wake, three unequal agents, every minute footnoted, and the school's silence on the record](docs/architecture.png)
+
+The same flow as a diagram the browser renders:
+
 ```mermaid
 flowchart TB
     IEP[IEP document]
@@ -105,7 +109,7 @@ flowchart TB
     style EMAIL fill:#e3f2fd,stroke:#42a5f5
 ```
 
-A rendered copy is at [docs/architecture.png](docs/architecture.png); the source is [docs/architecture.mmd](docs/architecture.mmd).
+The mermaid source is [docs/architecture.mmd](docs/architecture.mmd).
 
 The engine is deterministic wherever correctness matters. The model reads unstructured text and writes connective prose; it never decides a number, a date, or whether a school fell short. That division is why the arithmetic is reproducible and why the test suite can verify it without a network.
 
