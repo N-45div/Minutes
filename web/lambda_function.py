@@ -240,17 +240,29 @@ def key_is_valid(headers: dict[str, str], expected: str | None) -> bool:
 # --- the session id ------------------------------------------------------
 
 
-def session_id_for(case_id: Any) -> str:
+def session_id_for(case_id: Any, visitor: Any = None) -> str:
     """A stable runtimeSessionId for a case, so an approval answered later
     lands on the same runtime session as the wake that raised it when that
     session is still warm. The case itself lives in S3 under its id, so a
     session that has gone cold loses nothing; this only spares the round
-    trip. A payload with no case id gets a fresh session each time."""
+    trip. A payload with no case id gets a fresh session each time.
+
+    A ``visitor`` token, when the browser sends one, is folded in. The screen
+    sends it for the sample case only, where every visitor already gets their
+    own caseworker; giving them their own runtime session as well is what
+    keeps a demo honest across a deploy. A runtime session that stays warm
+    keeps the code it booted with, and a fixed id for the sample pinned every
+    judge -- and every film take -- to whichever microVM answered first, long
+    after the runtime had been rebuilt behind it. A family's case never sends
+    a token and keeps its stable id."""
     if case_id is None or str(case_id) == "":
         return f"{SESSION_PREFIX}{uuid.uuid4().hex}"
     stem = re.sub(r"[^A-Za-z0-9_-]+", "-", str(case_id)).strip("-")
     if not stem:
         return f"{SESSION_PREFIX}{uuid.uuid4().hex}"
+    token = re.sub(r"[^a-z0-9]+", "", str(visitor or "").lower())
+    if token:
+        stem = f"{stem}-{token[:32]}"
     session = f"{SESSION_PREFIX}{stem}-".ljust(SESSION_ID_MIN, "0")[:SESSION_ID_MAX]
     if not SESSION_ID_PATTERN.fullmatch(session):
         raise ValueError(f"case_id {case_id!r} does not make a legal session id")
@@ -297,7 +309,7 @@ def handle_api(event: dict[str, Any]) -> dict[str, Any]:
         return error(400, "body must be a JSON object")
 
     try:
-        session = session_id_for(payload.get("case_id"))
+        session = session_id_for(payload.get("case_id"), payload.get("visitor"))
     except ValueError as exc:
         return error(400, str(exc))
 

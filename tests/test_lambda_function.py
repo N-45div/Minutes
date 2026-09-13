@@ -211,6 +211,16 @@ def test_the_same_case_lands_on_the_same_session_every_time():
     # on Monday when it is still warm; that is what a stable id buys.
     assert lf.session_id_for("maya-demo") == lf.session_id_for("maya-demo")
     assert lf.session_id_for("maya-demo") != lf.session_id_for("rivera-2027")
+    # A visitor token gives the sample its own runtime session -- stable for
+    # that visitor, distinct from the shared one and from other visitors -- so
+    # a rebuilt runtime is not hidden behind a warm microVM the first visitor
+    # happened to land on. No token: unchanged.
+    assert lf.session_id_for("maya-demo", "judgeaaaa1111") == lf.session_id_for("maya-demo", "judgeaaaa1111")
+    assert lf.session_id_for("maya-demo", "judgeaaaa1111") != lf.session_id_for("maya-demo")
+    assert lf.session_id_for("maya-demo", "judgeaaaa1111") != lf.session_id_for("maya-demo", "judgebbbb2222")
+    assert lf.session_id_for("maya-demo", "") == lf.session_id_for("maya-demo")
+    assert lf.session_id_for("maya-demo", "../x") == lf.session_id_for("maya-demo", "x"), "only safe characters ride in the id"
+    assert 33 <= len(lf.session_id_for("maya-demo", "v" * 40)) <= 100
 
 
 @pytest.mark.parametrize("case_id", ["m", "maya demo", "a/b:c", "x" * 200, 42])
