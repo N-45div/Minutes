@@ -340,6 +340,23 @@ def test_unconfigured_deployments_wake_exactly_as_before(stored_case):
     assert len(out["new_cards"]) == 2 and out["notification"] is None
 
 
+def test_the_sample_case_wakes_cleanly_with_a_sender_configured(mailer):
+    """The failure only a deployment could show.
+
+    With no sender configured -- every local run, every test -- the notice
+    returns before it reads the case store. With one configured, it read the
+    sample's meta by the record's own id, which is the fixture's legacy id and
+    not one the store accepts, and every first wake on the live sample failed.
+    The sample never emails; it must never reach the store from here either.
+    """
+    out = _invoke({"action": "wake", "today": "2026-12-01", "ask_parent": False, "visitor": "judgeaaaa1111"})
+
+    assert out["status"] == "done", out.get("error")
+    assert len(out["new_cards"]) == 2
+    assert out["notification"] is None
+    assert mailer.sent == []
+
+
 def test_notify_can_be_switched_off_for_one_wake(mailer, stored_case):
     _invoke({"action": "set_notify_email", "case_id": stored_case, "email": "parent@example.test"})
     out = _invoke({"action": "wake", "case_id": stored_case, "today": "2026-12-01", "ask_parent": False, "notify": False})

@@ -483,6 +483,14 @@ def _notify_if_needed(worker: Caseworker, case, outcome: CycleOutcome, payload: 
     """
     if not outcome.new_cards or payload.get("notify") is False:
         return None
+    # The sample never has an address -- it is read-only, and set_notify_email
+    # refuses it -- so it is left out before the store is asked anything. That
+    # order matters: the sample's record carries the fixture's own legacy id,
+    # which the case store does not accept, and reading its meta from here
+    # broke every first wake on the live sample the moment a sender was
+    # configured, while every local run passed because no sender was.
+    if is_sample(case.case_id):
+        return None
     mailer = _mailer()
     if mailer is None:
         return None
