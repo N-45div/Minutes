@@ -636,7 +636,7 @@
       '<section class="tight"><div class="eyebrow">A new case' + (presetId ? ' · ' + esc(presetId) : '') + '</div>' +
       '<h1>Paste the IEP.</h1>' +
       '<p class="lede">Minutes reads it once into a ledger: each service as minutes, sessions and dates, and each deadline the document sets. You will see the ledger and confirm it before anything else happens. Use a pseudonym for your child if the document names them; the ledger keeps an alias, never the full name.</p>' +
-      '<form class="sheet" id="iep-form">' +
+      '<form class="sheet" id="iep-form" novalidate>' +
       '<label class="field"><span>The IEP, as the PDF the school sent you</span>' +
       '<input type="file" id="iep-file" name="iepfile" accept="application/pdf">' +
       '<span class="counter" id="iep-file-note">A scan is fine — Minutes reads the pages either way.</span></label>' +
@@ -658,8 +658,12 @@
     var picker = document.getElementById('iep-file'), fileNote = document.getElementById('iep-file-note');
     picker.addEventListener('change', function () {
       var f = picker.files && picker.files[0];
-      if (!f) { fileNote.textContent = 'A scan is fine — Minutes reads the pages either way.'; fileNote.className = 'counter'; return; }
+      if (!f) { ta.required = true; fileNote.textContent = 'A scan is fine — Minutes reads the pages either way.'; fileNote.className = 'counter'; return; }
       var over = f.size > MAX_UPLOAD_BYTES;
+      // A chosen file stands in for the text. The textarea stays `required`
+      // only while there is no file, or the browser's own "fill out this
+      // field" would stop a PDF at the submit button, as it once did.
+      ta.required = over;
       fileNote.textContent = f.name + ' · ' + humanBytes(f.size) +
         (over ? ' · too large. Minutes accepts up to ' + humanBytes(MAX_UPLOAD_BYTES) + '.' : '');
       fileNote.className = 'counter' + (over ? ' short' : '');
