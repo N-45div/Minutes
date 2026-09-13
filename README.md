@@ -16,8 +16,8 @@ The live app is linked from the submission. Everything below runs against the de
 
 1. **Try the sample case**, set *as of* to **1 December 2026** on This Week. Two decisions come back with their compiled letters — every factual sentence footnoted to a dated record. Release one to the outbox; decline the other. Open *What Minutes did*: asked, released, asked, declined, and the send tool refused by policy on the declined one.
 2. **Close the loop.** Release the records request as well; one blank is yours to fill, the reason you cannot inspect the records on site. On **Letters**, enter the day the district received it: 2 December. Then set *as of* to **29 January 2027**. The 45-day window has passed with nothing produced, so the wake raises *The district has not sent the service records you asked for*, *What Minutes did* gains a row that reads *recorded documented silence*, and the Statement for the term prints the sentence: received on Dec 2, 2026, due Jan 16, 2027 under 34 CFR 300.613(a), none recorded. Nothing about any session is claimed; those minutes stay undocumented, and the request stands where the district's own log should be.
-3. **Start your case** and choose the IEP as a PDF — a scanned one works. The ledger appears with the sentence each obligation came from.
-4. On **Evidence**, photograph a service log. The transcript appears, then the dated facts it grounds — including the reason a row gives for a missed session.
+3. **Start your case** and choose the IEP as a PDF — a scanned one works: [`fixtures/scanned_iep.pdf`](fixtures/scanned_iep.pdf) has no text layer at all. The ledger appears with the sentence each obligation came from.
+4. On **Evidence**, photograph a service log, or use [`fixtures/service_log_photo.jpg`](fixtures/service_log_photo.jpg). The transcript appears, then the dated facts it grounds — including the reason a row gives for a missed session.
 5. Paste [`fixtures/injected_school_email.md`](fixtures/injected_school_email.md) into *Paste correspondence*. It is filed word for word, flagged, and establishes nothing. The Statement does not move.
 6. Put your address on the case, wake it on 1 December, and the email arrives — one link, to the case, that decides nothing.
 
@@ -302,7 +302,7 @@ The caveat is the point: a demo key and an unguessable case id are the only thin
 
 ## Sample case
 
-`fixtures/iep_maya.md` is a fictional IEP for a fictional third-grader, with four services and six deadlines. `fixtures/correspondence/` is a synthetic Fall 2026 semester — routine confirmations, cancellations for assemblies and snow days, a speech-pathologist vacancy that quietly stops a service for weeks, a partially produced service log, a deflected records request, and a parent's own notes.
+`fixtures/scanned_iep.pdf` and `fixtures/service_log_photo.jpg` are the same kind of thing as images: a rendered IEP with no text layer and a photographed service log, both synthetic. `fixtures/iep_maya.md` is a fictional IEP for a fictional third-grader, with four services and six deadlines. `fixtures/correspondence/` is a synthetic Fall 2026 semester — routine confirmations, cancellations for assemblies and snow days, a speech-pathologist vacancy that quietly stops a service for weeks, a partially produced service log, a deflected records request, and a parent's own notes.
 
 ## License
 
