@@ -1020,3 +1020,34 @@ def test_the_tool_layer_never_reaches_a_model(monkeypatch):
     _call(draft_shortfall_letter, start=TERM_START, end=TERM_END, today=TODAY)
     _call(build_monthly_statement, start=TERM_START, end=TERM_END, today=TODAY)
     _call(pending_decisions, today=TODAY)
+
+
+def test_the_statement_reconciles_over_the_request_the_agent_sent_and_its_silence():
+    """A released request that went unanswered is in the parent's own document.
+
+    Reading the frozen baseline alone, the statement would report no request
+    outstanding to a parent holding their posted copy of req-001 -- and would
+    reconcile as if the district's silence had never happened. Through the
+    agent's session it shows the request, derives one documented-silence fact
+    per service it covered, and writes the sentence a complaint has to plead:
+    received on, due on, under which provision, nothing recorded.
+    """
+    day = "2026-12-05"
+    blind = _call(build_monthly_statement, start="2026-09-08", end=day, today=day)
+    assert blind["unanswered_requests"] == 0
+    assert blind["silence_facts"] == 0
+
+    aware = _call(
+        build_monthly_statement, start="2026-09-08", end=day, today=day,
+        tool_context=_context_with_a_sent_request(),
+    )
+
+    assert aware["unanswered_requests"] == 1
+    assert aware["silence_facts"] == 4  # one per service the request covered
+    # Silence never shrinks the undocumented bucket, so the arithmetic is unchanged.
+    assert aware["totals"] == blind["totals"]
+    md = aware["markdown"]
+    assert "Request req-001 was received by the district on Oct 15, 2026" in md
+    assert "a response was due Nov 29, 2026 under 34 CFR 300.613(a)" in md
+    assert "It says nothing about whether any session took place." in md
+    assert "The district has not sent the service records you asked for" in md

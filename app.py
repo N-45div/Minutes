@@ -131,7 +131,7 @@ from minutes.reader import documents_for, read_items
 from minutes.reconcile import canonical_service
 from minutes.tools import (
     CORRESPONDENCE_FIXTURE,
-    build_monthly_statement,
+    monthly_statement,
     case_requests,
     load_case_record,
     store_requests,
@@ -315,6 +315,7 @@ def _wake(worker: Caseworker, payload: dict) -> dict:
     agent.state.set(
         STATE_RAISED, {key: card.model_dump(mode="json") for key, card in outcome.raised.items()}
     )
+    _record_cycle_trail(worker, outcome)
     worker.sync()
 
     # The parent is told before the interrupt is raised, not after: the ask
@@ -750,14 +751,40 @@ def _pending(worker: Caseworker) -> dict:
     return {"status": "done", "interrupts": []}
 
 
-def _statement(payload: dict) -> dict:
+def _statement(worker: Caseworker, payload: dict) -> dict:
+    """The statement for a period, over everything this case's session knows.
+
+    Built through the same function the caseworker's tool uses, with the
+    worker's agent handed in: a records request the parent released lives in
+    that session, and without it the statement would reconcile as if the
+    request had never gone out -- and never gone unanswered.
+    """
     today = _day(payload, "today", date.today())
-    rendered = build_monthly_statement(
+    rendered = monthly_statement(
+        worker.agent,
         start=_day(payload, "start").isoformat(),
         end=_day(payload, "end", today).isoformat(),
         today=today.isoformat(),
     )
     return {"status": "done", "statement": rendered}
+
+
+def _record_cycle_trail(worker: Caseworker, outcome: CycleOutcome) -> None:
+    """Put the wake's own entries on the case's trail.
+
+    A quiet week is then a row a parent can read -- "found nothing that needs
+    the parent" -- rather than an absence indistinguishable from a schedule
+    that never fired, and a documented silence is on the record the day it was
+    derived. Deduplicated against the trail as it stands: "Check again" on the
+    same day re-runs the cycle and must not double every line.
+    """
+    seen = {(entry.entry_date, entry.action, entry.detail) for entry in worker.audit()}
+    for entry in outcome.audit:
+        key = (entry.entry_date, entry.action, entry.detail)
+        if key in seen:
+            continue
+        seen.add(key)
+        record_action(worker.agent, entry)
 
 
 # ---------------------------------------------------------------------------
@@ -1269,8 +1296,6 @@ def invoke(payload: dict, context) -> dict:
         case = _case_key(payload)
         token = set_current_case(case)
 
-        if action == "statement":
-            return _statement(payload)
         if action == "status":
             return _status(payload)
         if action == "case":
@@ -1287,6 +1312,8 @@ def invoke(payload: dict, context) -> dict:
             return _deadlines(case, payload)
 
         worker = _caseworker(_worker_key(payload))
+        if action == "statement":
+            return _statement(worker, payload)
         if action == "wake":
             if payload.get("background"):
                 return _background_wake(worker, payload, case)

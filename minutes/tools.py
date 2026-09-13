@@ -59,7 +59,7 @@ from .cases import case_store, current_case_id, is_sample, validate_case_id
 from .correspondence import attributed, load_cached_events, load_correspondence
 from .deadlines import evaluate_deadlines, next_action_date, urgency_for
 from .decisions import REQUEST_CADENCE_DAYS, capped_urgency, decisions_for, is_quiet
-from .discovery import RESPONSE_WINDOW_DAYS, due_requests, refresh_states
+from .discovery import RESPONSE_WINDOW_DAYS, due_requests, refresh_states, silence_events
 from .letters import (
     compile_compensatory_request,
     compile_records_request,
@@ -793,13 +793,30 @@ def build_monthly_statement(
             request states are evaluated against this, which may be later than
             the end of the period being reported.
     """
+    return monthly_statement(getattr(tool_context, "agent", None), start, end, today)
+
+
+def monthly_statement(agent: Any, start: str, end: str, today: str) -> dict:
+    """The statement, as a plain function: the tool and the runtime share it.
+
+    ``agent`` is the caseworker whose session holds the requests this case has
+    sent; ``None`` means the file's baseline is the whole request history. The
+    statement reconciles over exactly what the weekly wake reconciles over: the
+    base evidence plus the documented-silence facts derived from any request
+    that is past its response date and unanswered as of ``today``. Those facts
+    are a full recomputation on every build, never carried over, which is the
+    contract :func:`minutes.discovery.silence_events` sets. A statement that
+    reconciled without them would show a request the parent released and then
+    say nothing about what the district did with it.
+    """
     first, last = _window(start, end)
     now = _parse_date(today, "today")
     case = load_case_record()
 
-    result = reconcile(case.ledger, case.events, first, last)
+    requests = refresh_states(case_requests(agent, case), now)
+    silence = silence_events(requests, case.ledger, now)
+    result = reconcile(case.ledger, [*case.events, *silence], first, last)
     deadlines = evaluate_deadlines(case.ledger, now)
-    requests = _known_requests(tool_context, case, now)
     cards = decisions_for(case.ledger, result, deadlines, requests, now)
 
     statement = build_statement(case.ledger, result, deadlines, requests, cards)
@@ -816,6 +833,7 @@ def build_monthly_statement(
         "services": len(statement.lines),
         "open_deadlines": len(statement.open_deadlines),
         "unanswered_requests": len(statement.unanswered_requests),
+        "silence_facts": len(silence),
         "decisions": len(statement.decisions),
         "markdown": render_markdown(statement),
     }

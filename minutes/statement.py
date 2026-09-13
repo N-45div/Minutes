@@ -720,7 +720,7 @@ def _request_blocks(statement: Statement) -> list[_Block]:
         )
         for request in statement.unanswered_requests
     )
-    return [
+    blocks: list[_Block] = [
         _Heading("Records requests outstanding"),
         _Table(("Request", "Covers", "Sent", "Outstanding"), rows, aligns=("l", "l", "l", "l")),
         _Para(
@@ -729,6 +729,29 @@ def _request_blocks(statement: Statement) -> list[_Block]:
             "remembered."
         ),
     ]
+    # A request past its response date is the one fact in this document the
+    # family could not have created by watching. It is written up in the
+    # sentence a letter or a complaint has to plead -- the date received, the
+    # date due, the regulation -- and bounded the way silence_events bounds it:
+    # a fact about the records, never about a session.
+    for request in statement.unanswered_requests:
+        if request.sent_on is None or request.response_due is None:
+            continue
+        if request.response_due >= statement.period_end or request.response_due < request.sent_on:
+            continue
+        blocks.append(
+            _Para(
+                f"Request {request.request_id} was received by the district on "
+                f"{_fmt_date(request.sent_on)}, and a response was due "
+                f"{_fmt_date(request.response_due)} under 34 CFR 300.613(a). As of "
+                f"{_fmt_date(statement.period_end)} none is recorded. That is a dated "
+                "fact about the records: the district produced none within the time "
+                "the regulation allows. It says nothing about whether any session took "
+                "place. Those minutes stay in the undocumented column, and this request "
+                "stands where the district's own service log should be."
+            )
+        )
+    return blocks
 
 
 def _decision_blocks(statement: Statement) -> list[_Block]:

@@ -632,3 +632,26 @@ def test_pending_lists_only_the_unanswered_interrupts():
     assert [i["id"] for i in out["interrupts"]] == [waiting.id]
     assert out["interrupts"][0]["name"] == "send-records-request:abc123"
     assert "answer" in out["how_to_answer"]
+
+
+def test_a_wake_leaves_its_own_rows_on_the_trail_and_a_recheck_does_not_double_them():
+    """A quiet week is a row the parent can read, not an absence.
+
+    The cycle's entries -- the requests checked, the ledger reconciled, nothing
+    needing the parent -- go on the case's trail with the caseworker's own. A
+    second wake on the same day ("Check again") must add nothing: the same
+    facts on the same date are the same rows.
+    """
+    session = "q" * 40
+    first = _invoke({"action": "wake", "today": "2026-09-22", "ask_parent": False}, session_id=session)
+    assert first["status"] == "done"
+    trail = _invoke({"action": "audit"}, session_id=session)["audit"]
+    actions = [entry["action"] for entry in trail]
+    assert "checked the records requests" in actions
+    assert "reconciled the ledger" in actions
+    assert "found nothing that needs the parent" in actions
+    assert all(entry["actor"] == "minutes-cycle" for entry in trail if entry["action"] in actions)
+
+    _invoke({"action": "wake", "today": "2026-09-22", "ask_parent": False}, session_id=session)
+    again = _invoke({"action": "audit"}, session_id=session)["audit"]
+    assert len(again) == len(trail)
