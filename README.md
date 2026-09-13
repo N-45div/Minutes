@@ -8,15 +8,18 @@ So the promise quietly goes unkept, and the only person positioned to notice is 
 
 Minutes is a background agent, built with the **Strands Agents SDK** and deployed on **Amazon Bedrock AgentCore**, that keeps that ledger. It reads the IEP once, reconciles the evidence against it, works out when the school's own records are due to be asked for, and stays silent — until there is a decision only the parent can make. When one arrives, the agent pauses on a Strands interrupt and nothing leaves the family until the parent answers.
 
+Every other tool in this space consumes documents. Minutes creates evidence. It exercises the parent's statutory right to the school's own records on a schedule; the parent posts the request and records the day the district received it; and if nothing comes back inside the 45 days 34 CFR 300.613(a) allows, the next wake turns that silence into a dated fact, and the Statement says so in the sentence a complaint has to plead. The school's own silence, on the parent's own paper, made by an agent that was not watching the school. That loop, closed without the parent lifting a finger after the receipt date, is the product.
+
 ## See it work in five minutes
 
 The live app is linked from the submission. Everything below runs against the deployed agent.
 
 1. **Try the sample case**, set *as of* to **1 December 2026** on This Week. Two decisions come back with their compiled letters — every factual sentence footnoted to a dated record. Release one to the outbox; decline the other. Open *What Minutes did*: asked, released, asked, declined, and the send tool refused by policy on the declined one.
-2. **Start your case** and choose the IEP as a PDF — a scanned one works. The ledger appears with the sentence each obligation came from.
-3. On **Evidence**, photograph a service log. The transcript appears, then the dated facts it grounds — including the reason a row gives for a missed session.
-4. Paste [`fixtures/injected_school_email.md`](fixtures/injected_school_email.md) into *Paste correspondence*. It is filed word for word, flagged, and establishes nothing. The Statement does not move.
-5. Put your address on the case, wake it on 1 December, and the email arrives — one link, to the case, that decides nothing.
+2. **Close the loop.** Release the records request as well; one blank is yours to fill, the reason you cannot inspect the records on site. On **Letters**, enter the day the district received it: 2 December. Then set *as of* to **29 January 2027**. The 45-day window has passed with nothing produced, so the wake raises *The district has not sent the service records you asked for*, *What Minutes did* gains a row that reads *recorded documented silence*, and the Statement for the term prints the sentence: received on Dec 2, 2026, due Jan 16, 2027 under 34 CFR 300.613(a), none recorded. Nothing about any session is claimed; those minutes stay undocumented, and the request stands where the district's own log should be.
+3. **Start your case** and choose the IEP as a PDF — a scanned one works. The ledger appears with the sentence each obligation came from.
+4. On **Evidence**, photograph a service log. The transcript appears, then the dated facts it grounds — including the reason a row gives for a missed session.
+5. Paste [`fixtures/injected_school_email.md`](fixtures/injected_school_email.md) into *Paste correspondence*. It is filed word for word, flagged, and establishes nothing. The Statement does not move.
+6. Put your address on the case, wake it on 1 December, and the email arrives — one link, to the case, that decides nothing.
 
 Every one of those runs was also verified against the deployed runtime before submission, and the audit trail on the case records each step.
 
@@ -32,7 +35,7 @@ Every one of those runs was also verified against the deployed runtime before su
 | `parent_observed` | The family's log — dated, but not the school's record |
 | `documented_silence` | Records were properly requested and not produced |
 
-**3. Active discovery.** Minutes does not wait for evidence to appear. On a fixed cadence it works out that the parent's statutory right of access is due to be exercised again, and compiles the request — which the parent approves and then posts themselves, by a channel that proves delivery. Minutes has no mail channel and does not pretend to: the 45-day response clock starts only when the parent reports the date the district received it, because that receipt date is what every later statement about the district's silence rests on. When a request does go unanswered past that window, the silence is recorded as dated evidence. A school that will not produce its logs has itself created documentation.
+**3. Active discovery.** Minutes does not wait for evidence to appear. On a fixed cadence it works out that the parent's statutory right of access is due to be exercised again, and compiles the request — which the parent approves and then posts themselves, by a channel that proves delivery. Minutes has no mail channel and does not pretend to: the 45-day response clock starts only when the parent reports the date the district received it, because that receipt date is what every later statement about the district's silence rests on. When a request does go unanswered past that window, the silence is recorded as dated evidence: one documented-silence fact per service the request covered, dated the day the response was due, and written into the Statement as it prints — received on, due on, under 34 CFR 300.613(a), none recorded. A school that will not produce its logs has itself created documentation, and every quiet wake that finds nothing is a row on the case's trail rather than an absence.
 
 **4. Reconciliation keeps four buckets apart.** For every service, over every period:
 
